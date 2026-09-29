@@ -1,0 +1,15 @@
+# Build artifacts
+build/
+dist/
+__pycache__/
+*.pyc
+
+# Real school data — never commit live/user data
+bpas_data.db
+wfp_data.db
+*.pre-bpas.bak
+*.db-journal
+
+# Local scratch
+_*.py
+.claude/

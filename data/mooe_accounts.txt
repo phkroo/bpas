@@ -1,0 +1,33 @@
+5020101000	Traveling Expenses - Local
+5020201002	Training Expenses
+5020301001	ICT Office Supplies
+5020301002	Office Supplies Expenses
+5020302000	Accountable Forms Expenses
+5020308000	Medical, Dental and Laboratory Supplies Expenses
+5020321002	Office Equipment - Semi-Expendable Machinery and Equipment Expenses
+5020310000	Agricultural & Marine Supplies Expense
+5020321003	ICT Equipment - Semi-Expendable Machinery and Equipment Expenses
+5020321008	Disaster Response and Rescue Equipment - Semi-Expendable Machinery and Equipment Expenses
+5020321099	Other Machinery and Equipment - Semi-Expendable Machinery and Equipment Expenses
+5020322001	Furniture and Fixtures - Semi-Expendable Furniture, Fixtures and Books Expenses
+5020399000	Other Supplies and Materials Expenses
+5020309000	Fuel, Oil, Lubricants Expense
+5020401000	Water Expenses
+5020402000	Electricity Expenses
+5020502001	Mobile
+5020503000	Internet Subscription Expenses
+5021299099	Other General Services
+5021203000	Security Services
+5021304002	R & M - School Buildings
+5021305002	R & M - Office Equipment
+5021305003	R & M - ICT Equipment
+5021304099	R & M - Other Structures
+5021304001	R & M - Buildings
+5021307000	R & M - Furniture and Fixtures
+5021502000	Fidelity Bond Premiums
+5029904000	Transportation and Delivery Expenses
+5029999099	Other Maintenance and Operating Expenses
+5020321007	Communications Equipment - Semi-Expendable Machinery and Equipment Expenses
+5020321012	Sports Equipment - Semi-Expendable Machinery and Equipment Expenses
+5020501000	Postage and Courier Services
+5020321013	Technical and Scientific Equipment - Semi-Expendable Machinery and Equipment Expenses

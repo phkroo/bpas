@@ -1,0 +1,93 @@
+ES 0818005 120071 Amalao Elementary School
+ES 0818005 120072 Bais City Pilot School
+ES 0818005 120073 Cambanjao ES
+ES 0818005 120074 Cambuilao Elementary School
+ES 0818005 120075 Cansanag Elementary School
+ES 0818005 120078 Praxevilla Elementary School
+ES 0818005 120079 Sto.Tomas Elementary School
+ES 0818005 120081 Tangculogan Elementary School
+ES 0818005 237501 Cambayungon Elementary School
+ES 0818005 237502 Talungon Elementary School
+ES 0818005 237503 Bais City West ES
+ES 0818005 237504 Katacgahan Elementary School
+ES 0818005 237505 Bais City Special Science Elementary School
+ES 0818005 120082 Bais City South Central School
+ES 0818005 120084 Biso Elementary School
+ES 0818005 120085 Cabanlutan Elementary School
+ES 0818005 120086 Calasga-an ES
+ES 0818005 120087 Dr. Ernesto M. Yared Sr. Memorial Elementary School
+ES 0818005 120088 Cambagahan Elementary School
+ES 0818005 120089 Cambaguio Elementary School
+ES 0818005 120091 Dawis Elementary School
+ES 0818005 120092 Lonoy Elementary School
+ES 0818005 120093 Lo-oc Elementary Schhol
+ES 0818005 120094 Lowason Elementary School
+ES 0818005 120097 Mansangaban Elementary School
+ES 0818005 120098 Okiot ES
+ES 0818005 120099 Palangging ES
+ES 0818005 120101 Panalaan ES
+ES 0818005 120102 Panam-angan Elementary School
+ES 0818005 120105 Tabuac ES
+ES 0818005 120106 Tacalan ES
+IS-ES 0918527 502401 Dansulan Integrated School
+IS-ES 0918268 502503 Olympia Island Integrated School
+IS-ES 0918270 502515 Tagpo National High School
+IS-ES 0918528 502397 Basak Integrated School
+IS-ES 0918529 502398 Sab-ahan Integrated School
+IS-ES 0918530 502399 Cipriano Alcala Memorial Integrated School
+IS-ES 0918531 502400 Mangganay Integrated School
+IS-ES 0918532 502402 Palaypay Integrated School
+IS-ES 0918533 502403 San Vicente Integrated School
+IS-ES 0918534 502404 Mabunao Integrated School
+JHS-IU 0918272 303212 Bais City National High School (Main)
+JHS 0918273 303216 Bais City National Science High School
+JHS 0918258 323001 Cabugan National High School
+JHS 0918262 323003 Governor Julian L. Teves Memorial High School
+JHS 0918264 323005 Manuel L. Teves Memorial High School
+JHS 0918266 323006 Sto. Thomas National High School
+JHS 0918267 323007 Mansangaban National High School
+JHS 0918260 323008 Okiot National High School
+JHS 0918263 323010 Lucila C. Yared National High School
+JHS 0918271 323012 Mayor Praxedes P. Villanueva II Memorial High School
+JHS 0918275 323013 Tangculogan High School
+IS-JHS 0918527 502401 Dansulan Integrated School
+IS-JHS 0918268 502503 Olympia Island Integrated School
+IS-JHS 0918270 502515 Tagpo National High School
+JHS 0918269 303213 Josefina T. Valencia National High School
+JHS 0918274 303214 Dodong Escaño Memorial High School (Bais City HS)
+JHS 0918265 303215 Lonoy National High School
+JHS 0918261 323002 Javier Laxina I Memorial High School
+JHS 0918259 323004 Cambagahan National High School
+IS-JHS 0918528 502397 Basak Integrated School
+IS-JHS 0918529 502398 Sab-ahan Integrated School
+IS-JHS 0918530 502399 Cipriano Alcala Memorial Integrated School
+IS-JHS 0918531 502400 Mangganay Integrated School
+IS-JHS 0918532 502402 Palaypay Integrated School
+IS-JHS 0918533 502403 San Vicente Integrated School
+IS-JHS 0918534 502404 Mabunao Integrated School
+SHS-IU 0918272 303212 Bais City National High School (Main)
+SHS 0918273 303216 Bais City National Science High School
+SHS 0918258 323001 Cabugan National High School
+SHS 0918262 323003 Governor Julian L. Teves Memorial High School
+SHS 0918264 323005 Manuel L. Teves Memorial High School
+SHS 0918266 323006 Sto. Thomas National High School
+SHS 0918267 323007 Mansangaban National High School
+SHS 0918260 323008 Okiot National High School
+SHS 0918263 323010 Lucila C. Yared National High School
+SHS 0918271 323012 Mayor Praxedes P. Villanueva II Memorial High School
+SHS 0918275 323013 Tangculogan High School
+IS-SHS 0918527 502401 Dansulan Integrated School
+IS-SHS 0918268 502503 Olympia Island Integrated School
+IS-SHS 0918270 502515 Tagpo National High School
+SHS 0918269 303213 Josefina T. Valencia National High School
+SHS 0918274 303214 Dodong Escaño Memorial High School (Bais City HS)
+SHS 0918265 303215 Lonoy National High School
+SHS 0918261 323002 Javier Laxina I Memorial High School
+SHS 0918259 323004 Cambagahan National High School
+IS-SHS 0918528 502397 Basak Integrated School
+IS-SHS 0918529 502398 Sab-ahan Integrated School
+IS-SHS 0918530 502399 Cipriano Alcala Memorial Integrated School
+IS-SHS 0918531 502400 Mangganay Integrated School
+IS-SHS 0918532 502402 Palaypay Integrated School
+IS-SHS 0918533 502403 San Vicente Integrated School
+IS-SHS 0918534 502404 Mabunao Integrated School
