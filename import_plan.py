@@ -15,9 +15,10 @@ SUPPORTED_FORMAT_VERSIONS = {1}
 # False: any rule problem blocks the import, as before.
 IMPORT_FLAGGED_ROWS = True
 
-# Even with IMPORT_FLAGGED_ROWS, a row whose price or quantity is not a number cannot be
-# stored sensibly, so these still block the file.
-HARD_FAIL_PREFIXES = ("Unit Price is not a number", "Quantity is not a number")
+# Even with IMPORT_FLAGGED_ROWS, a row whose price or quantity is missing, not a number or
+# not above 0 still blocks the file (same as the Excel import).
+HARD_FAIL_PREFIXES = ("Unit Price is not a number", "Quantity is not a number",
+                      "Unit Price must be greater than 0", "Quantity must be greater than 0")
 
 
 class ImportPlanError(Exception):

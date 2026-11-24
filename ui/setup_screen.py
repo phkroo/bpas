@@ -9,9 +9,9 @@ from PySide6.QtWidgets import (
 import db
 from sig_defaults import SIG_DEFAULT_NAMES
 from ui import style
+from ui.sig_cards import SigCards
 from ui.tools_screen import ToolsScreen
 
-SIG_COLUMNS = ["Role", "Name", "Designation"]
 SECTIONS = ["School Information", "Signatories", "Fund Sources",
             "Account Codes", "Procurement Modes", "Units", "Schools", "Tools", "Admin Access"]
 NO_SAVE_SECTIONS = ["Tools", "Admin Access"]
@@ -167,12 +167,9 @@ class SetupScreen(QWidget):
         v.addWidget(tabs)
         self.sig_tables = {}
         self.sig_scope_labels = {}
-        self.sig_show_position = {}
         for g in SIG_GROUPS:
             doc, title, _roles, per_plan = g[:4]
             show_position = _sig_group_cols(g)
-            self.sig_show_position[doc] = show_position
-            cols = SIG_COLUMNS if show_position else SIG_COLUMNS[:2]
 
             page = QWidget()
             pv = QVBoxLayout(page)
@@ -185,25 +182,16 @@ class SetupScreen(QWidget):
             pv.addWidget(scope)
             scope.setVisible(per_plan)      # after parenting, or it flashes as its own window
 
-            table = QTableWidget(0, len(cols))
-            table.setHorizontalHeaderLabels(cols)
-            table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-            table.setSelectionBehavior(QAbstractItemView.SelectRows)
-            table.verticalHeader().setVisible(False)
-            table.verticalHeader().setDefaultSectionSize(30)
-            self.sig_tables[doc] = table
-            pv.addWidget(table)
+            cards = SigCards(show_position)
+            self.sig_tables[doc] = cards
+            pv.addWidget(cards, 1)
 
             row = QHBoxLayout()
-            add_btn = QPushButton("Add Row")
+            add_btn = QPushButton("+ Add signatory")
             add_btn.setObjectName("secondary")
             add_btn.clicked.connect(lambda _=False, d=doc: self._add_sig_row(d))
-            rm_btn = QPushButton("Remove Selected")
-            rm_btn.setObjectName("danger")
-            rm_btn.clicked.connect(lambda _=False, d=doc: self._remove_sig_row(d))
             row.addStretch()
             row.addWidget(add_btn)
-            row.addWidget(rm_btn)
             pv.addLayout(row)
 
             tabs.addTab(page, title)
@@ -543,45 +531,15 @@ class SetupScreen(QWidget):
     # ---------- signatory helpers ----------
 
     def _add_sig_row(self, doc, role="", name="", position="", read_only=False):
-        table = self.sig_tables[doc]
-        r = table.rowCount()
-        table.insertRow(r)
-        values = (role, name, position) if self.sig_show_position.get(doc, True) else (role, name)
-        p = style.current_palette()
-        for c, value in enumerate(values):
-            item = QTableWidgetItem(value)
-            if read_only and c in (1, 2):
-                # Name/Designation for a role that always tracks the active
-                # plan's School Head — editing it here would do nothing, since
-                # it's recomputed from Records on every load.
-                item.setFlags(item.flags() & ~Qt.ItemIsEditable)
-                item.setBackground(QColor(p["disabled_bg"]))
-                item.setForeground(QColor(p["muted"]))
-                item.setToolTip("Follows the active plan's School Head (Records) — "
-                                "not editable here.")
-            table.setItem(r, c, item)
-
-    def _remove_sig_row(self, doc):
-        table = self.sig_tables[doc]
-        rows = sorted({i.row() for i in table.selectedItems()}, reverse=True)
-        for r in rows:
-            table.removeRow(r)
-        if rows:
+        # a role that always tracks the active plan's School Head is read-only: editing it
+        # here would do nothing, since it is recomputed from Records on every load
+        card = self.sig_tables[doc].add_card(role, name, position, read_only)
+        if not role and not self._loading:      # a card the user just added: ready to type
+            card.role_edit.setFocus()
             self._mark_dirty()
 
     def _collect_signatories(self, doc):
-        table = self.sig_tables[doc]
-        has_position = self.sig_show_position.get(doc, True)
-        out = []
-        for r in range(table.rowCount()):
-            def cell(c):
-                item = table.item(r, c)
-                return item.text().strip() if item else ""
-            role, name = cell(0), cell(1).upper()
-            position = cell(2) if has_position else ""
-            if role or name or position:
-                out.append({"role": role, "name": name, "position": position})
-        return out
+        return self.sig_tables[doc].collect()
 
     def _collect_account_codes(self):
         t = self.acct_code_table
@@ -627,7 +585,7 @@ class SetupScreen(QWidget):
         active = db.get_active_batch()
         for doc, _title, default_roles, per_plan in (g[:4] for g in SIG_GROUPS):
             table = self.sig_tables[doc]
-            table.setRowCount(0)
+            table.clear()
             if per_plan:
                 scope = self.sig_scope_labels[doc]
                 if active is None:
@@ -640,8 +598,7 @@ class SetupScreen(QWidget):
                     for role in default_roles:
                         self._add_sig_row(doc, role)
                     continue
-                scope.setText(f"For the active plan: {plan['school_name'] or '(unnamed plan)'}"
-                              f"{('  —  ' + plan['level']) if plan['level'] else ''}")
+                scope.setText(f"For {plan['school_name'] or '(unnamed plan)'}")
                 table.setEnabled(True)
             existing = db.list_signatories(doc, active if per_plan else None)
             if existing:
@@ -666,6 +623,8 @@ class SetupScreen(QWidget):
                         # saved earlier for a different school
                         name = (plan["school_head"] or "").upper()
                         position = default.get("position", "")
+                    elif not position and default.get("position"):
+                        position = default["position"]       # blank Designation: the default
                     self._add_sig_row(doc, s["role"], name, position,
                                       read_only=role_key in _AUTO_NAME_ROLES)
             else:
@@ -763,23 +722,10 @@ class SetupScreen(QWidget):
         for e in (self.region_edit, self.division_edit, self.year_edit):
             e.textEdited.connect(self._mark_dirty)
         for t in (self.acct_code_table, self.procurement_mode_table, self.unit_table,
-                  self.fund_table,
-                  self.school_table, *self.sig_tables.values()):
+                  self.fund_table, self.school_table):
             t.itemChanged.connect(self._mark_dirty)
-        for t in self.sig_tables.values():
-            t.itemChanged.connect(self._force_name_uppercase)
-
-    def _force_name_uppercase(self, item):
-        """Signatory Name column: forced to ALL CAPS as soon as it's typed,
-        not just on save."""
-        if self._loading or item.column() != 1:
-            return
-        upper = item.text().upper()
-        if item.text() != upper:
-            table = item.tableWidget()
-            table.blockSignals(True)
-            item.setText(upper)
-            table.blockSignals(False)
+        for cards in self.sig_tables.values():      # names are forced to capitals by the card
+            cards.edited.connect(self._mark_dirty)
 
     def confirm_leave(self) -> bool:
         """Leaving Setup drops any unsaved edits (no prompt); always fine to leave."""

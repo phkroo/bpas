@@ -182,6 +182,9 @@ class PPMPScreen(QWidget):
     def _generate(self):
         if self.batch_id is None:
             return
+        from ui.signatory_check import confirm_signatories
+        if not confirm_signatories(self, "ppmp", self.batch_id, "PPMP"):
+            return
         from ui.filepaths import dated_download_path, open_path
         from ui.toast import toast
         import os

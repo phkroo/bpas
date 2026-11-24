@@ -30,13 +30,27 @@ SIG_DEFAULT_NAMES = {
         "position": "OIC - Assistant Schools Division Superintendent"},
     ("sobp", "approved by"): {"name": SDS_NAME, "position": SDS_POSITION},
 
-    # APP: only the Approved by is preloaded; the rest differ per school.
+    # APP: the people differ per school, so only the designations are preloaded
+    # (plus the SDS as Approved by).
+    ("app", "prepared by"): {"position": "ADAS/AO"},
+    ("app", "reviewed by"): {"position": "BAC Chair"},
+    ("app", "recommended by"): {"auto_name": True, "position": "School Head"},   # the plan's SH
     ("app", "approved by"): {"name": SDS_NAME, "position": SDS_POSITION},
+
+    # PR/JR: designations only; the names differ per school. (RSQ has none: anyone can sign.)
+    ("pr", "requested by"): {"position": "ADAS/AO"},
+    ("pr", "recommending approval"): {"position": "School Treasurer"},
+    ("pr", "approved by"): {"position": "School Head"},
 
     # SBR: SH follows the active plan's School Head (display only); Approved By is the SDS.
     ("cashadv", "sh"): {"auto_name": True, "position": "School Head"},
     ("cashadv", "approved by"): {"name": SDS_NAME, "position": SDS_POSITION},
 }
+
+# Designations only (no names), used to fill a blank Designation on signatories saved before
+# these defaults existed. Never overwrites a designation someone typed.
+POSITION_DEFAULTS = {k: v["position"] for k, v in SIG_DEFAULT_NAMES.items()
+                     if k[0] in ("app", "pr") and "name" not in v and v.get("position")}
 
 # Documents whose signatories are global (not per plan) and their roles, in print order.
 GLOBAL_ROLES = {

@@ -414,6 +414,14 @@ class ImportDialog(QDialog):
                 f"Imported {result.imported_count} row(s); skipped {n}.\n\n{preview}"
                 + ("\n  ..." if n > 15 else ""))
 
+        if result.warnings:
+            lines = ["• " + import_excel.describe(p) for p in result.warnings]
+            more = "\n  … and %d more" % (len(lines) - 15) if len(lines) > 15 else ""
+            QMessageBox.information(
+                self, "Imported with warnings",
+                f"Imported {result.imported_count} row(s). These rows were imported as they "
+                "are and show red in Records until fixed:\n\n" + "\n".join(lines[:15]) + more)
+
         self.import_btn.setEnabled(False)
         self.imported.emit()
         self.accept()

@@ -266,6 +266,8 @@ def init_db():
         if conn.execute("SELECT COUNT(*) FROM fund_sources").fetchone()[0] == 0:
             _seed_fund_sources(conn)
         _seed_default_signatories(conn)
+        _fill_blank_sig_positions(conn)
+        _fix_app_prepared_position(conn)
 
         conn.commit()
     finally:
@@ -421,6 +423,30 @@ def _seed_default_signatories(conn):
                 "INSERT INTO signatories (doc, batch_id, role, name, position, sort_order) "
                 "VALUES (?, NULL, ?, ?, ?, ?)", (doc, role, name, position, i))
     conn.execute("INSERT INTO app_settings (key, value) VALUES ('sig_defaults_seeded', '1') "
+                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+
+
+def _fill_blank_sig_positions(conn):
+    """Once per database: signatories saved before the APP / PR designation defaults existed
+    get those designations where the Designation is still blank. Typed values are kept."""
+    if conn.execute("SELECT 1 FROM app_settings WHERE key = 'sig_positions_filled'").fetchone():
+        return
+    import sig_defaults
+    for (doc, role), position in sig_defaults.POSITION_DEFAULTS.items():
+        conn.execute(
+            "UPDATE signatories SET position = ? WHERE doc = ? AND LOWER(TRIM(role)) = ? "
+            "AND TRIM(COALESCE(position, '')) = ''", (position, doc, role))
+    conn.execute("INSERT INTO app_settings (key, value) VALUES ('sig_positions_filled', '1') "
+                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+
+
+def _fix_app_prepared_position(conn):
+    """Once per database: the first APP default was spelled "AO/ADAS"; it is "ADAS/AO"."""
+    if conn.execute("SELECT 1 FROM app_settings WHERE key = 'app_prepared_pos_fixed'").fetchone():
+        return
+    conn.execute("UPDATE signatories SET position = 'ADAS/AO' WHERE doc = 'app' "
+                 "AND LOWER(TRIM(role)) = 'prepared by' AND position = 'AO/ADAS'")
+    conn.execute("INSERT INTO app_settings (key, value) VALUES ('app_prepared_pos_fixed', '1') "
                  "ON CONFLICT(key) DO UPDATE SET value = excluded.value")
 
 

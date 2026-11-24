@@ -3,7 +3,7 @@
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QLabel, QPushButton, QVBoxLayout, QWidget
 
-NO_PLAN_NOTE = ("No plan yet.\n\nGo to Records and import your B+ Template.")
+NO_PLAN_NOTE = "No plan yet.\n\nImport your B+ Template to get started."
 
 
 def no_plan_label(text: str = NO_PLAN_NOTE) -> QLabel:
@@ -14,8 +14,8 @@ def no_plan_label(text: str = NO_PLAN_NOTE) -> QLabel:
 
 
 class NoPlanWidget(QWidget):
-    """No-plan note plus a 'Go to Records' button; emits go_to_records when clicked."""
-    go_to_records = Signal()
+    """No-plan note plus an 'Import File...' button; emits import_requested when clicked."""
+    import_requested = Signal()
 
     def __init__(self):
         super().__init__()
@@ -23,7 +23,7 @@ class NoPlanWidget(QWidget):
         lay.setAlignment(Qt.AlignCenter)
         lay.setSpacing(16)
         lay.addWidget(no_plan_label())
-        btn = QPushButton("Go to Records")
+        btn = QPushButton("Import File...")
         btn.setMinimumSize(180, 44)
-        btn.clicked.connect(self.go_to_records.emit)
+        btn.clicked.connect(self.import_requested.emit)
         lay.addWidget(btn, alignment=Qt.AlignCenter)

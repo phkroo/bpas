@@ -27,7 +27,7 @@ RECORDS_INDEX = VIEW_TABS.index("Records")
 CONSOLIDATION_INDEX = VIEW_TABS.index("Consolidation")
 
 
-APP_VERSION = "1.1"   # shown in the title bar
+APP_VERSION = "1.3"   # shown in the title bar
 
 
 class MainWindow(QMainWindow):
@@ -66,7 +66,7 @@ class MainWindow(QMainWindow):
         for w in (self.dashboard_screen.empty_widget, self.consolidation_screen.empty_widget,
                   self.ppmp_screen.empty, self.sobp_screen.empty,
                   self.app_screen.empty, self.pr_screen.empty):
-            w.go_to_records.connect(lambda: self._select_view(RECORDS_INDEX))
+            w.import_requested.connect(self._open_import)
 
         self.views = QStackedWidget()
         self.views.addWidget(self.dashboard_screen)             # 0

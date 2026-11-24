@@ -663,6 +663,9 @@ class PRScreen(QWidget):
     def _generate(self):
         if self.batch_id is None:
             return
+        from ui.signatory_check import confirm_signatories
+        if not confirm_signatories(self, "pr", self.batch_id, "PR/JR"):
+            return
         proceed, pr_ids = self._pr_ids_choice("the PR/JR")
         if not proceed:
             return
@@ -673,6 +676,9 @@ class PRScreen(QWidget):
         if self.batch_id is None:
             return
         import rsq_pdf
+        from ui.signatory_check import confirm_signatories
+        if not confirm_signatories(self, "rsq", self.batch_id, "RSQ"):
+            return
         proceed, pr_ids = self._pr_ids_choice("the RSQ")
         if not proceed:
             return
@@ -681,6 +687,9 @@ class PRScreen(QWidget):
 
     def _generate_rca(self, month):
         if self.batch_id is None:
+            return
+        from ui.signatory_check import confirm_signatories
+        if not confirm_signatories(self, "cashadv", self.batch_id, "SBR"):
             return
         self._emit_pdf(f"Request for Cash Advance - {(month or '').title()}",
                        lambda p: cashadv_pdf.generate(self.batch_id, p, month, ""))

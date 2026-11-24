@@ -86,6 +86,8 @@ def build_html(batch_id) -> str:
 
     def sig_cell(label, keyword):
         name, position = _sig(sigs, keyword)
+        if keyword == "recommended":         # always the plan's School Head, as on the PPMP
+            name, position = (plan.get("school_head") or "").strip(), "School Head"
         return (
             "<td width='25%' valign='top' style='padding-top:6px'>"
             f"{label}<br><br><br>"

@@ -5,6 +5,8 @@ Problems come in two kinds:
 - "warning" -> shown to the user, but the import still goes ahead:
                 * GAD Category empty on a GAD-program row  (row is imported as is)
                 * a row with no Item Description           (row is imported with "Blank")
+                * a dropdown value that is not in its list (imported as typed)
+                * Amount different from unit price x qty x rate (imported as typed)
 """
 
 import os
@@ -41,7 +43,7 @@ REQUIRED_TEXT_FIELDS = ["item_description"]
 
 # Row-level reasons from _parse() that only warn: the row is still imported.
 BLANK_ITEM_TEXT = "Blank"
-SOFT_ROW_REASONS = ("Item Description is empty",)
+SOFT_ROW_REASONS = ("Item Description is empty", "Amount ")
 
 
 @dataclass
@@ -70,6 +72,10 @@ def describe(p: Problem) -> str:
         return f"GAD Category (column E) is filled but PAP Name is not the GAD program — rows {rows}"
     if p.kind == "row_error":
         return f"Row {rows}: {p.value}"
+    if p.kind == "not_in_list":
+        import validation
+        label = dict(validation.DROPDOWNS).get(p.field, p.field)
+        return f"{label} “{p.value}” is not in the list — rows {rows}"
     where = f" ({p.field})" if p.field else ""
     return f"{p.kind}{where} {p.value} — rows {rows}".replace("  ", " ")
 
@@ -180,7 +186,8 @@ def check_file(path: str) -> list[Problem]:
         if db.match_school(v) is None:
             problems.append(Problem("unknown_school", "category_uacs_school", v, rows))
     for (f, v), rows in sorted(bad.items(), key=lambda kv: (kv[0][0], -len(kv[1]))):
-        problems.append(Problem("not_in_list", f, v, rows))
+        # warning only: the value is imported as typed and the row shows red in Records
+        problems.append(Problem("not_in_list", f, v, rows, severity="warning"))
     if gad_missing:
         # warning only: the rows are imported with GAD Category left empty
         problems.append(Problem("gad_missing", "gad_category", "", gad_missing,
@@ -310,9 +317,9 @@ def _parse(path: str):
         expected = (db.money(record["unit_price"], record["qty"], rate)
                     if rate is not None else None)
         if expected is not None and amount is not None and round(abs(amount - expected), 2) > 0.01:   # a 1-centavo rounding gap is fine
+            # warning only: the row is imported with the Amount as typed (red in Records)
             skipped_rows.append((row_idx, f"Amount {amount:,.2f} does not match unit price x "
-                                          f"qty x rate ({expected:,.2f})"))
-            continue
+                                          f"qty x rate ({expected:,.2f}) — kept as typed, not forced to balance"))
 
         record["unit_price"] = round(record["unit_price"], 2)
         record["qty"] = round(record["qty"], 2)

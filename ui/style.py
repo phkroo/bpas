@@ -176,6 +176,31 @@ QFrame#glass, QFrame#statCard, QFrame#checkPanel {{
     border-radius: {r['card']}px;
 }}
 
+/* ---------- signatory cards (Setup) ---------- */
+QFrame#sigCard {{
+    background: {p['surface']};
+    border: 1px solid {p['surface_border']};
+    border-radius: {r['card']}px;
+}}
+QFrame#sigCard[locked="true"] {{ background: {p['table_alt']}; }}
+QFrame#sigCard QLineEdit {{ background: {p['input_bg']}; }}
+QFrame#sigCard QLineEdit[locked="true"] {{ background: {p['disabled_bg']}; color: {p['muted']}; }}
+QFrame#sigCard QLineEdit#sigRole {{
+    background: transparent; border: 1px solid transparent; padding: 3px 6px;
+    font-weight: 700; color: {p['heading']};
+}}
+QFrame#sigCard QLineEdit#sigRole:hover {{ border: 1px solid {p['input_border']}; }}
+QFrame#sigCard QLineEdit#sigRole:focus {{ background: {p['input_bg']}; border: 1px solid {p['accent']}; }}
+QLabel#sigTag {{
+    background: {p['sel_bg']}; color: {p['sel_text']}; border-radius: 8px; padding: 2px 8px;
+    font-size: 11px;
+}}
+QPushButton#sigRemove {{
+    background: transparent; color: {p['muted']}; border: none; border-radius: 13px;
+    font-size: 16px; padding: 0;
+}}
+QPushButton#sigRemove:hover {{ background: {p['danger']}; color: #ffffff; }}
+
 QListWidget#setupNav {{
     background: transparent;
     border: none;

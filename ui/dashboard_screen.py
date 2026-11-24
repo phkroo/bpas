@@ -22,7 +22,6 @@ GROUP_OPTIONS = [
 
 
 class DashboardScreen(QWidget):
-    go_to_records = Signal()
     plan_changed = Signal()
 
     def __init__(self):
@@ -63,7 +62,6 @@ class DashboardScreen(QWidget):
 
         # ---- empty state ----
         self.empty_widget = NoPlanWidget()
-        self.empty_widget.go_to_records.connect(self.go_to_records.emit)
         root.addWidget(self.empty_widget)
 
         self.main_widget = QWidget()
