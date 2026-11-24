@@ -17,6 +17,10 @@ _ITEM_COLS = [
 ]
 
 
+def _get(row, key):
+    return (row[key] if key in row.keys() else "") or ""
+
+
 def export_plan(batch_id: int, out_path: str) -> str:
     conn = db.get_connection()
     try:
@@ -30,12 +34,12 @@ def export_plan(batch_id: int, out_path: str) -> str:
         conn.close()
 
     items = [
-        {c: r[c] for c in _ITEM_COLS}
+        {**{c: r[c] for c in _ITEM_COLS}, "ref": r["id"]}      # "ref" ties PR/JR lines to their item
         for r in db.query_items({"batch_id": batch_id})
     ]
 
     signatories = {}
-    for doc in sorted(db.PER_PLAN_SIG_DOCS):
+    for doc in sorted(db.PER_PLAN_SIG_DOCS | db.PLAN_OVERRIDE_SIG_DOCS):
         rows = db.list_signatories(doc, batch_id)
         signatories[doc] = [
             {"role": r["role"], "name": r["name"], "position": r["position"],
@@ -49,8 +53,11 @@ def export_plan(batch_id: int, out_path: str) -> str:
         pr_headers.append({
             "pr_no": h["pr_no"], "pr_date": h["pr_date"], "month": h["month"],
             "purpose": h["purpose"], "created_at": h["created_at"],
+            "delivery_period": _get(h, "delivery_period"), "fund_source": _get(h, "fund_source"),
+            "stock_no": _get(h, "stock_no"), "kind": _get(h, "kind"),
             "lines": [
-                {"accounting_title": ln["accounting_title"],
+                {"item_ref": ln["bpas_item_id"],
+                 "accounting_title": ln["accounting_title"],
                  "item_description": ln["item_description"],
                  "general_description": ln["general_description"],
                  "unit": ln["unit"], "qty": ln["qty"],
@@ -58,6 +65,10 @@ def export_plan(batch_id: int, out_path: str) -> str:
                 for ln in lines
             ],
         })
+
+    # everything the school typed on the APP screen (project titles, dates, remarks, ...)
+    app_details = [{k: v for k, v in d.items() if k != "batch_id"}
+                   for d in db.get_app_row_details(batch_id).values()]
 
     payload = {
         "format_version": FORMAT_VERSION,
@@ -73,10 +84,12 @@ def export_plan(batch_id: int, out_path: str) -> str:
             "school_head": batch.get("school_head", ""),
             "total_allotment": batch.get("total_allotment", 0),
             "gad_allotment": batch.get("gad_allotment", 0),
+            "provision_rate": batch.get("provision_rate"),
         },
         "items": items,
         "signatories": signatories,
         "pr_headers": pr_headers,
+        "app_row_details": app_details,
         "item_count": len(items),
     }
 

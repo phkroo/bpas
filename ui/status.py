@@ -20,7 +20,4 @@ _TINTS = {
 def banner_qss(kind: str) -> str:
     theme = db.get_setting("ui_theme", "light")
     bg, fg = _TINTS.get(theme, _TINTS["light"]).get(kind, _TINTS["light"]["ok"])
-    return (
-        "font-size: 14px; font-weight: 700; padding: 9px 14px; border-radius: 8px;"
-        f" background: {bg}; color: {fg};"
-    )
+    return f"background: {bg}; color: {fg};"

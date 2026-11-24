@@ -5,7 +5,9 @@ from PySide6.QtWidgets import (
 )
 
 import db
+from ui import style
 import sobp_pdf
+from ui.empty_state import NoPlanWidget
 
 COLS = ["Particular", "%", "Amount"] + sobp_pdf.MONTHS + ["Total"]
 
@@ -20,21 +22,24 @@ class SOBPScreen(QWidget):
         root = QVBoxLayout(self)
         root.setSpacing(10)
 
-        self.banner = QLabel()
-        self.banner.setWordWrap(True)
-        self.banner.setStyleSheet(
-            "font-size: 14px; font-weight: bold; padding: 8px 12px; border-radius: 6px;"
-        )
+        self.banner = style.make_banner()
         root.addWidget(self.banner)
 
         bar = QHBoxLayout()
-        bar.addStretch()
-        self.gen_btn = QPushButton("Generate SOB / MDP PDF")
+        title = QLabel("School Operating Budget / Monthly Disbursement Program")
+        title.setObjectName("pageTitle")
+        title.setWordWrap(True)          # wraps instead of forcing a wide window
+        bar.addWidget(title, 1)
+        self.gen_btn = QPushButton("Generate SOB / MDP")
         self.gen_btn.clicked.connect(self._generate)
         bar.addWidget(self.gen_btn)
-        root.addLayout(bar)
+        self.bar_widget = QWidget()
+        bar.setContentsMargins(0, 0, 0, 0)
+        self.bar_widget.setLayout(bar)
+        root.addWidget(self.bar_widget)
 
         self.table = QTableWidget(0, len(COLS))
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setHorizontalHeaderLabels(COLS)
         hh = self.table.horizontalHeader()
         hh.setDefaultAlignment(Qt.AlignCenter | Qt.AlignVCenter)
@@ -46,20 +51,20 @@ class SOBPScreen(QWidget):
         self.table.setTextElideMode(Qt.ElideRight)
         self.table.setWordWrap(False)
         self.table.setAlternatingRowColors(True)
+        self.table.setShowGrid(False)
         self.table.verticalHeader().setVisible(False)
-        self.table.verticalHeader().setDefaultSectionSize(24)
+        self.table.verticalHeader().setDefaultSectionSize(28)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         root.addWidget(self.table, stretch=1)
 
-        self.empty = QLabel("No plan loaded. Import a plan in Records first.")
-        self.empty.setObjectName("onBg")
-        self.empty.setAlignment(Qt.AlignCenter)
-        root.addWidget(self.empty)
+        self.empty = NoPlanWidget()
+        root.addWidget(self.empty, stretch=1)
 
     def refresh(self):
         self.batch_id = db.get_active_batch()
         has = self.batch_id is not None
         self.empty.setVisible(not has)
+        self.bar_widget.setVisible(False)
         if not has:
             self.banner.setText("")
             self.banner.setVisible(False)
@@ -71,6 +76,7 @@ class SOBPScreen(QWidget):
         self.banner.setVisible(True)
         self._set_banner(status)
         balanced = bool(status["balanced"])
+        self.bar_widget.setVisible(balanced)
         self.gen_btn.setEnabled(balanced)
         self.table.setVisible(balanced)
 
@@ -99,9 +105,13 @@ class SOBPScreen(QWidget):
         self.table.setRowCount(0)
         total_allot = d["total_allotment"]
 
-        def add(label, amount, monthly, pct=None, bold=False, header=False):
+        def add(label, amount, monthly, pct=None, bold=False, header=False, spacer=False):
             ri = self.table.rowCount()
             self.table.insertRow(ri)
+            if spacer:
+                self.table.setSpan(ri, 0, 1, len(COLS))
+                self.table.setRowHeight(ri, 10)
+                return
             if header:
                 it = QTableWidgetItem(label)
                 f = it.font(); f.setBold(True); it.setFont(f)
@@ -127,14 +137,19 @@ class SOBPScreen(QWidget):
         add("Total Allotment", total_allot, d["total_row"]["monthly"], bold=True)
         gad_pct = (d["gad_allotment"] / total_allot * 100) if total_allot else 0.0
         add("Gender and Development (GAD)", d["gad_allotment"],
-            d["gad_row"]["monthly"], gad_pct)
+            d["gad_row"]["monthly"], gad_pct, bold=True)
+        add("", 0, [], spacer=True)
         add("Account Title / Description", 0, [], header=True)
         for r in d["rows"]:
             add(r["title"], r["amount"], r["monthly"], r["pct"])
         add("Total Allotment", d["total_row"]["amount"],
             d["total_row"]["monthly"], 100.0, bold=True)
-        add("5% Tax of the Total Proposed MOOE Budget",
-            round(total_allot * 0.05, 2), [], bold=True)
+
+        non_taxable = sum(r["amount"] for r in d["rows"]
+                          if r["title"] in sobp_pdf.NON_TAXABLE_TITLES)
+        taxable_base = total_allot - non_taxable
+        add("5% Tax of the Taxable MOOE Budget",
+            round(taxable_base * 0.05, 2), [], bold=True)
 
     def _generate(self):
         if self.batch_id is None:

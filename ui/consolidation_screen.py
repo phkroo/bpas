@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
 
 import db
 import export_excel
+from ui.empty_state import NoPlanWidget
 from ui.records_screen import FIELDS, HEADERS_WRAPPED
 
 ALL_LEVELS = None   # sentinel combo-data value for "All School Levels"
@@ -29,17 +30,7 @@ class ConsolidationScreen(QWidget):
         layout = QVBoxLayout(self)
 
         # ---- empty state ----
-        self.empty_widget = QWidget()
-        empty_layout = QVBoxLayout(self.empty_widget)
-        empty_layout.setAlignment(Qt.AlignCenter)
-        empty_label = QLabel(
-            "No plans imported yet.\n\nImport plans in Records (Excel or "
-            "BPAS Plan Files) to see a consolidated view here."
-        )
-        empty_label.setAlignment(Qt.AlignCenter)
-        empty_label.setObjectName("onBg")
-        empty_label.setStyleSheet("font-size: 16px;")
-        empty_layout.addWidget(empty_label)
+        self.empty_widget = NoPlanWidget()
         layout.addWidget(self.empty_widget)
 
         # ---- school level switcher ----
@@ -49,23 +40,34 @@ class ConsolidationScreen(QWidget):
         level_row.setSpacing(8)
         level_lbl = QLabel("School Level:")
         level_lbl.setObjectName("onBg")
-        level_lbl.setStyleSheet("font-weight: bold;")
+        level_lbl.setObjectName("bold")
         level_row.addWidget(level_lbl)
         self.level_combo = QComboBox()
-        self.level_combo.setMinimumWidth(280)
+        self.level_combo.setMinimumWidth(160)
         self.level_combo.currentIndexChanged.connect(self._on_level_changed)
         level_row.addWidget(self.level_combo, 1)
         layout.addWidget(self.level_widget)
 
-        # ---- filters ----
+        # ---- filters (two rows so the screen still fits in half a monitor) ----
         self.filter_widget = QWidget()
-        filter_row = QHBoxLayout(self.filter_widget)
-        filter_row.setContentsMargins(0, 0, 0, 0)
-        filter_row.setSpacing(8)
+        filter_col = QVBoxLayout(self.filter_widget)
+        filter_col.setContentsMargins(0, 0, 0, 0)
+        filter_col.setSpacing(6)
+        top_row, combo_row = QHBoxLayout(), QHBoxLayout()
+        top_row.setSpacing(8); combo_row.setSpacing(8)
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("Search...")
         self.search_input.returnPressed.connect(self.refresh)
-        filter_row.addWidget(self.search_input, 1)
+        top_row.addWidget(self.search_input, 1)
+
+        apply_btn = QPushButton("Search")
+        apply_btn.clicked.connect(self.refresh)
+        top_row.addWidget(apply_btn)
+
+        clear_btn = QPushButton("Clear Filters")
+        clear_btn.setObjectName("secondary")
+        clear_btn.clicked.connect(self.clear_filters)
+        top_row.addWidget(clear_btn)
 
         self.pap_combo = QComboBox()
         self.gad_combo = QComboBox()
@@ -79,22 +81,19 @@ class ConsolidationScreen(QWidget):
         ]:
             combo.addItem(label, None)
             combo.currentIndexChanged.connect(self.refresh)
-            filter_row.addWidget(combo, 1)
+            combo.setMinimumWidth(100)
+            combo_row.addWidget(combo, 1)
 
-        apply_btn = QPushButton("Search")
-        apply_btn.clicked.connect(self.refresh)
-        filter_row.addWidget(apply_btn)
-
-        clear_btn = QPushButton("Clear Filters")
-        clear_btn.setObjectName("secondary")
-        clear_btn.clicked.connect(self.clear_filters)
-        filter_row.addWidget(clear_btn)
-
-        for w in (self.search_input, self.pap_combo, self.gad_combo,
-                  self.accounting_combo, self.procurement_combo):
-            w.setMinimumWidth(120)
-            w.setMaximumWidth(16777215)
-
+        filter_col.addLayout(top_row)
+        filter_col.addLayout(combo_row)
+        # an explicit minimum, so the one-line layout never stops the window shrinking
+        # to half a screen (it wraps to two lines below that width)
+        self.filter_widget.setMinimumWidth(300)
+        self._filter_parts = (top_row, combo_row, self.search_input,
+                              [self.pap_combo, self.gad_combo, self.accounting_combo, self.procurement_combo],
+                              apply_btn, clear_btn)
+        self._filters_narrow = None
+        self._arrange_filters()
         layout.addWidget(self.filter_widget)
 
         self.table = QTableWidget(0, len(FIELDS))
@@ -118,17 +117,35 @@ class ConsolidationScreen(QWidget):
         bottom_row.setContentsMargins(0, 0, 0, 0)
         self.total_label = QLabel("Total: 0.00")
         self.total_label.setObjectName("onBg")
-        self.total_label.setStyleSheet("font-weight: bold;")
+        self.total_label.setObjectName("bold")
         bottom_row.addWidget(self.total_label)
         bottom_row.addStretch()
 
+        mdp_btn = QPushButton("Export MDP Summary")
+        mdp_btn.setToolTip("One row per school with the amount for each month (Excel).")
+        mdp_btn.clicked.connect(self.on_export_mdp)
+        bottom_row.addWidget(mdp_btn)
+
         export_btn = QPushButton("Export Current View to Excel")
+        export_btn.setToolTip("Every item in the current view, one row each, with Excel filters on "
+                              "every column. In Excel: Insert > PivotTable to summarise it.")
         export_btn.clicked.connect(self.on_export)
         bottom_row.addWidget(export_btn)
 
         layout.addWidget(self.bottom_widget)
 
         self._loading = False
+
+    def _arrange_filters(self):
+        from ui.layout_utils import arrange_filter_row
+        narrow = self.width() < 960
+        if narrow != self._filters_narrow:
+            self._filters_narrow = narrow
+            arrange_filter_row(*self._filter_parts, narrow)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._arrange_filters()
 
     def _autofit(self):
         self.table.resizeColumnsToContents()
@@ -244,6 +261,27 @@ class ConsolidationScreen(QWidget):
         self.total_label.setText(f"Total: {total:,.2f}  ({len(rows)} row(s))")
         self._current_rows = rows
 
+    def on_export_mdp(self):
+        ids = self._current_batch_ids()
+        if ids is None:
+            ids = [b["id"] for b in db.list_batches()]
+        if not ids:
+            QMessageBox.information(self, "Nothing to Export", "There are no plans for this level.")
+            return
+        from ui.filepaths import in_downloads
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export MDP Summary", in_downloads("bpas_mdp_summary.xlsx"),
+            "Excel Files (*.xlsx)")
+        if not path:
+            return
+        try:
+            import export_mdp
+            n = export_mdp.export_mdp_summary(ids, path)
+        except Exception as exc:
+            QMessageBox.critical(self, "Export Failed", f"Could not export:\n{exc}")
+            return
+        QMessageBox.information(self, "Export Complete", f"{n} school(s) exported to:\n{path}")
+
     def on_export(self):
         if not getattr(self, "_current_rows", None):
             QMessageBox.information(self, "Nothing to Export", "No rows in the current view.")
@@ -256,11 +294,7 @@ class ConsolidationScreen(QWidget):
         if not path:
             return
         try:
-            export_excel.export_items(
-                self._current_rows, path,
-                signatories=db.list_signatories("ppmp"),
-                school_info=db.get_school_info(),
-            )
+            export_excel.export_items(self._current_rows, path)
         except Exception as exc:
             QMessageBox.critical(self, "Export Failed", f"Could not export:\n{exc}")
             return

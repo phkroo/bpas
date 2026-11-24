@@ -1,29 +1,69 @@
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QPoint
 
 from ui import style
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTableWidget, QTableWidgetItem,
     QHeaderView, QPushButton, QFileDialog, QMessageBox, QDialog, QComboBox,
-    QDialogButtonBox, QAbstractItemView, QCheckBox, QFormLayout, QLineEdit,
+    QDialogButtonBox, QAbstractItemView, QCheckBox, QFormLayout, QLineEdit, QMenu,
 )
 
 import db
 import pr_pdf
+from ui.empty_state import NoPlanWidget
 import cashadv_pdf
 
-COLS = ["PR No.", "Items", "Total", "Purpose"]
+COLS = ["PR/JR No.", "Items", "Total", "Purpose"]
 
-BUILD_COLS = ["Include", "Item Description", "Qty", "Unit", "Unit Price", "Amount"]
-INC_COL, DESC_COL, QTY_COL, UNIT_COL, PRICE_COL, AMT_COL = range(6)
+BUILD_COLS = ["Include", "Item Description", "Project Title", "Qty", "Unit", "Unit Price", "Amount"]
+INC_COL, DESC_COL, PURP_COL, QTY_COL, UNIT_COL, PRICE_COL, AMT_COL = range(7)
 
 
-def _join_purposes(descs):
-    seen = []
-    for d in descs:
-        d = (d or "").strip()
-        if d and d not in seen:
-            seen.append(d)
-    return " / ".join(seen)
+LABEL_W = 112   # shared label column so the boxes of stacked rows line up
+
+
+def _field_row(label, edit, label_w=LABEL_W):
+    """Label beside its input: [label][input]."""
+    row = QHBoxLayout()
+    row.setSpacing(8)
+    lbl = QLabel(label)
+    if label_w:
+        lbl.setFixedWidth(label_w)
+    row.addWidget(lbl)
+    row.addWidget(edit, stretch=1)
+    return row
+
+
+def _delivery_fund_row(delivery_edit, fund_edit):
+    """Delivery Period and Fund Source side by side, each label beside its box."""
+    row = QHBoxLayout()
+    row.setSpacing(16)
+    row.addLayout(_field_row("Delivery Period:", delivery_edit), stretch=1)
+    row.addLayout(_field_row("Fund Source:", fund_edit, None), stretch=1)
+    return row
+
+
+def _fund_source_combo(current=""):
+    """Dropdown of the fund sources set up in Setup > Fund Sources. A saved value that
+    is no longer on the list is kept so an old PR/JR doesn't silently change."""
+    box = QComboBox()
+    names = db.list_fund_sources()
+    box.addItems(names)
+    current = (current or "").strip()
+    if current and current not in names:
+        box.addItem(current)
+    box.setCurrentText(current or (names[0] if names else ""))
+    return box
+
+
+PR_KINDS = (("Purchase Request", "PR"), ("Job Request", "JR"))
+
+
+def _kind_combo(kind="PR"):
+    box = QComboBox()
+    for label, code in PR_KINDS:
+        box.addItem(label, code)
+    box.setCurrentIndex(1 if kind == "JR" else 0)
+    return box
 
 
 def _qty_txt(v):
@@ -47,17 +87,21 @@ class PRBuilderDialog(QDialog):
         self.month_combo.addItems(db.pr_months(batch_id))
         self.month_combo.currentTextChanged.connect(self._load_items)
         top.addWidget(self.month_combo)
+        top.addSpacing(16)
+        top.addWidget(QLabel("Type:"))
+        self.kind_combo = _kind_combo()
+        top.addWidget(self.kind_combo)
         top.addStretch()
         self.total_lbl = QLabel("PR total: ₱0.00")
-        self.total_lbl.setStyleSheet("font-weight: bold;")
+        self.total_lbl.setObjectName("bold")
         top.addWidget(self.total_lbl)
         root.addLayout(top)
 
         hint = QLabel("Tick <b>Include</b> to add an item. Each item is requisitioned "
-                      "at its full remaining quantity. R & M items are issued as a Job "
-                      "Request (JR) and can't be combined with regular PR items.")
+                      "at its full remaining quantity. Choose the <b>Type</b> "
+                      "(Purchase Request or Job Request) for the request.")
         hint.setWordWrap(True)
-        hint.setStyleSheet(f"color: {style.current_palette()['muted']};")
+        hint.setObjectName("muted")
         root.addWidget(hint)
 
         self.table = QTableWidget(0, len(BUILD_COLS))
@@ -66,36 +110,22 @@ class PRBuilderDialog(QDialog):
         for c in range(len(BUILD_COLS)):
             hh.setSectionResizeMode(c, QHeaderView.ResizeToContents)
         hh.setSectionResizeMode(DESC_COL, QHeaderView.Stretch)
+        hh.setSectionResizeMode(PURP_COL, QHeaderView.Interactive)
+        self.table.setColumnWidth(PURP_COL, 340)
+        self.table.setTextElideMode(Qt.ElideRight)
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setSelectionMode(QAbstractItemView.NoSelection)
         root.addWidget(self.table, stretch=1)
 
-        prow = QHBoxLayout()
-        prow.addWidget(QLabel("Purpose:"))
-        self.purpose_combo = QComboBox()
-        self.purpose_combo.setEditable(True)
-        self.purpose_combo.addItem("")
-        self.purpose_combo.addItems(db.pr_purposes(batch_id))
-        self.purpose_combo.setCurrentText("")
-        self._purpose_dirty = False
-        self._setting_purpose = False
-        self.purpose_combo.editTextChanged.connect(self._on_purpose_edited)
-        prow.addWidget(self.purpose_combo, stretch=1)
-        root.addLayout(prow)
+        self.purpose_combo = QLineEdit()
+        self.purpose_combo.setPlaceholderText("Required")
+        root.addLayout(_field_row("Purpose:", self.purpose_combo))
 
-        extra = QFormLayout()
-        extra.setSpacing(6)
         self.delivery_edit = QLineEdit()
         self.delivery_edit.setPlaceholderText("e.g. 5 calendar days")
-        self.fund_source_edit = QLineEdit()
-        self.fund_source_edit.setPlaceholderText("e.g. MOOE")
-        self.stock_no_edit = QLineEdit()
-        self.stock_no_edit.setPlaceholderText("optional")
-        extra.addRow("Delivery Period:", self.delivery_edit)
-        extra.addRow("Fund Source:", self.fund_source_edit)
-        extra.addRow("Stock No.:", self.stock_no_edit)
-        root.addLayout(extra)
+        self.fund_source_edit = _fund_source_combo()
+        root.addLayout(_delivery_fund_row(self.delivery_edit, self.fund_source_edit))
 
         btns = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         btns.accepted.connect(self._save)
@@ -105,14 +135,13 @@ class PRBuilderDialog(QDialog):
         self._load_items()
 
     def _load_items(self):
-        self._purpose_dirty = False
         month = self.month_combo.currentText()
         self._rows = db.pr_buildable_items(self.batch_id, month) if month else []
         self._checks = []
         self.table.setRowCount(len(self._rows))
         for i, r in enumerate(self._rows):
             box = QCheckBox()
-            box.stateChanged.connect(self._recalc)
+            box.toggled.connect(self._recalc)
             holder = QWidget()
             hl = QHBoxLayout(holder)
             hl.setContentsMargins(0, 0, 0, 0)
@@ -124,6 +153,7 @@ class PRBuilderDialog(QDialog):
             amt = round(r["remaining_qty"] * (r["unit_price"] or 0), 2)
             for c, text in (
                 (DESC_COL, r["item_description"] or ""),
+                (PURP_COL, r["project_title"] or ""),
                 (QTY_COL, _qty_txt(r["remaining_qty"])),
                 (UNIT_COL, r["unit"] or ""),
                 (PRICE_COL, f"{r['unit_price']:,.2f}"),
@@ -131,32 +161,19 @@ class PRBuilderDialog(QDialog):
             ):
                 it = QTableWidgetItem(text)
                 it.setFlags(Qt.ItemIsEnabled)
+                it.setToolTip(text)
                 if c in (QTY_COL, PRICE_COL, AMT_COL):
                     it.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
                 self.table.setItem(i, c, it)
         self._recalc()
 
-    def _on_purpose_edited(self, _text):
-        if not self._setting_purpose:
-            self._purpose_dirty = True
-
     def _row_qty(self, i, r):
         return r["remaining_qty"] if self._checks[i].isChecked() else 0.0
-
-    def _auto_purpose(self):
-        if self._purpose_dirty:
-            return
-        descs = [r["general_description"] for i, r in enumerate(self._rows)
-                 if self._row_qty(i, r) > 0]
-        self._setting_purpose = True
-        self.purpose_combo.setCurrentText(_join_purposes(descs))
-        self._setting_purpose = False
 
     def _recalc(self, *_):
         total = sum(round(self._row_qty(i, r) * (r["unit_price"] or 0), 2)
                     for i, r in enumerate(self._rows))
         self.total_lbl.setText(f"PR total: ₱{total:,.2f}")
-        self._auto_purpose()
 
     def _save(self):
         month = self.month_combo.currentText()
@@ -175,18 +192,14 @@ class PRBuilderDialog(QDialog):
             QMessageBox.warning(self, "Nothing to save",
                                 "Tick at least one item to include.")
             return
-        kinds = {db.is_jr_title(r["accounting_title"]) for r in included_rows}
-        if len(kinds) > 1:
-            QMessageBox.warning(
-                self, "Can't combine PR and JR",
-                "You've ticked both regular items (Purchase Request) and R & M "
-                "items (Job Request). These can't be saved together — untick "
-                "one group and save it as its own PR/JR.")
+        if not self.purpose_combo.text().strip():
+            QMessageBox.warning(self, "Purpose required", "Enter the Purpose first.")
+            self.purpose_combo.setFocus()
             return
-        db.create_pr(self.batch_id, month, self.purpose_combo.currentText(), lines,
+        db.create_pr(self.batch_id, month, self.purpose_combo.text(), lines,
                     delivery_period=self.delivery_edit.text(),
-                    fund_source=self.fund_source_edit.text(),
-                    stock_no=self.stock_no_edit.text())
+                    fund_source=self.fund_source_edit.currentText(),
+                    kind=self.kind_combo.currentData())
         self.accept()
 
     def showEvent(self, event):
@@ -211,11 +224,26 @@ class PREditDialog(QDialog):
         self.month = header["month"]
 
         self.setWindowTitle(f"Edit PR/JR {header['pr_no']} — {self.month.title()}")
-        self.resize(960, 680)
+        self.resize(1200, 680)
 
         root = QVBoxLayout(self)
 
-        root.addWidget(QLabel(f"<b>Already in this PR</b> — {self.month.title()} only"))
+        self.pr_no_edit = QLineEdit(header["pr_no"] or "")
+        self.purpose_edit = QLineEdit(header["purpose"] or "")
+        self.purpose_edit.setPlaceholderText("Required")
+        existing_lines = db.pr_lines_for(pr_header_id)
+        self.kind_combo = _kind_combo(db.pr_kind(header, existing_lines))
+        self.pr_no_edit.setFixedWidth(200)
+        no_row = _field_row("PR/JR No.:", self.pr_no_edit)
+        no_row.addSpacing(24)
+        no_row.addWidget(QLabel("Type:"))
+        no_row.addWidget(self.kind_combo)
+        no_row.addStretch()
+        root.addLayout(no_row)
+        root.addSpacing(12)
+
+        left = QVBoxLayout()
+        left.addWidget(QLabel(f"<b>Already in this PR/JR</b> — {self.month.title()} only"))
         self.existing_table = QTableWidget(0, 4)
         self.existing_table.setHorizontalHeaderLabels(
             ["Item Description", "Qty", "Unit Price", "Amount"])
@@ -224,18 +252,25 @@ class PREditDialog(QDialog):
         for c in (1, 2, 3):
             hh.setSectionResizeMode(c, QHeaderView.ResizeToContents)
         self.existing_table.verticalHeader().setVisible(False)
+        self.existing_table.verticalHeader().setDefaultSectionSize(30)
         self.existing_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.existing_table.setSelectionMode(QAbstractItemView.NoSelection)
-        self.existing_table.setMaximumHeight(160)
-        root.addWidget(self.existing_table)
+        self.existing_table.setFocusPolicy(Qt.NoFocus)      # no focus rectangle on a read-only table
+        self.existing_table.setShowGrid(False)
+        left.addWidget(self.existing_table, stretch=1)
 
+        right = QVBoxLayout()
         top = QHBoxLayout()
         top.addWidget(QLabel(f"<b>Add more items</b> ({self.month.title()} only):"))
+        top.addSpacing(12)
+        self.select_all = QCheckBox("Select all")
+        self.select_all.toggled.connect(self._toggle_all)
+        top.addWidget(self.select_all)
         top.addStretch()
         self.total_lbl = QLabel("Adding: ₱0.00")
-        self.total_lbl.setStyleSheet("font-weight: bold;")
+        self.total_lbl.setObjectName("bold")
         top.addWidget(self.total_lbl)
-        root.addLayout(top)
+        right.addLayout(top)
 
         self.table = QTableWidget(0, len(BUILD_COLS))
         self.table.setHorizontalHeaderLabels(BUILD_COLS)
@@ -243,33 +278,26 @@ class PREditDialog(QDialog):
         for c in range(len(BUILD_COLS)):
             hh2.setSectionResizeMode(c, QHeaderView.ResizeToContents)
         hh2.setSectionResizeMode(DESC_COL, QHeaderView.Stretch)
+        hh2.setSectionResizeMode(PURP_COL, QHeaderView.Interactive)
+        self.table.setColumnWidth(PURP_COL, 150)
+        self.table.setTextElideMode(Qt.ElideRight)
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setSelectionMode(QAbstractItemView.NoSelection)
-        root.addWidget(self.table, stretch=1)
+        self.table.setShowGrid(False)
+        right.addWidget(self.table, stretch=1)
+        panes = QHBoxLayout()
+        panes.setSpacing(14)
+        panes.addLayout(left, stretch=5)
+        panes.addLayout(right, stretch=7)
+        root.addLayout(panes, stretch=1)
 
-        prow = QHBoxLayout()
-        prow.addWidget(QLabel("Purpose:"))
-        self.purpose_edit = QComboBox()
-        self.purpose_edit.setEditable(True)
-        self.purpose_edit.addItem("")
-        self.purpose_edit.addItems(db.pr_purposes(batch_id))
-        self.purpose_edit.setCurrentText(header["purpose"] or "")
-        prow.addWidget(self.purpose_edit, stretch=1)
-        root.addLayout(prow)
+        root.addLayout(_field_row("Purpose:", self.purpose_edit))
 
-        extra = QFormLayout()
-        extra.setSpacing(6)
         self.delivery_edit = QLineEdit(header["delivery_period"] or "")
         self.delivery_edit.setPlaceholderText("e.g. 5 calendar days")
-        self.fund_source_edit = QLineEdit(header["fund_source"] or "")
-        self.fund_source_edit.setPlaceholderText("e.g. MOOE")
-        self.stock_no_edit = QLineEdit(header["stock_no"] or "")
-        self.stock_no_edit.setPlaceholderText("optional")
-        extra.addRow("Delivery Period:", self.delivery_edit)
-        extra.addRow("Fund Source:", self.fund_source_edit)
-        extra.addRow("Stock No.:", self.stock_no_edit)
-        root.addLayout(extra)
+        self.fund_source_edit = _fund_source_combo(header["fund_source"] or "")
+        root.addLayout(_delivery_fund_row(self.delivery_edit, self.fund_source_edit))
 
         btns = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         btns.accepted.connect(self._save)
@@ -298,7 +326,7 @@ class PREditDialog(QDialog):
         self.table.setRowCount(len(self._rows))
         for i, r in enumerate(self._rows):
             box = QCheckBox()
-            box.stateChanged.connect(self._recalc)
+            box.toggled.connect(self._recalc)
             holder = QWidget()
             hl = QHBoxLayout(holder)
             hl.setContentsMargins(0, 0, 0, 0)
@@ -310,6 +338,7 @@ class PREditDialog(QDialog):
             amt = round(r["remaining_qty"] * (r["unit_price"] or 0), 2)
             for c, text in (
                 (DESC_COL, r["item_description"] or ""),
+                (PURP_COL, r["project_title"] or ""),
                 (QTY_COL, _qty_txt(r["remaining_qty"])),
                 (UNIT_COL, r["unit"] or ""),
                 (PRICE_COL, f"{r['unit_price']:,.2f}"),
@@ -317,10 +346,15 @@ class PREditDialog(QDialog):
             ):
                 it = QTableWidgetItem(text)
                 it.setFlags(Qt.ItemIsEnabled)
+                it.setToolTip(text)
                 if c in (QTY_COL, PRICE_COL, AMT_COL):
                     it.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
                 self.table.setItem(i, c, it)
         self._recalc()
+
+    def _toggle_all(self, on):
+        for box in self._checks:
+            box.setChecked(on)
 
     def _row_qty(self, i, r):
         return r["remaining_qty"] if self._checks[i].isChecked() else 0.0
@@ -340,35 +374,39 @@ class PREditDialog(QDialog):
             lines.append({"bpas_item_id": r["bpas_item_id"], "qty": qty})
             included_rows.append(r)
         current = db.get_pr_header(self.pr_header_id)
+        if not self.purpose_edit.text().strip():
+            QMessageBox.warning(self, "Purpose required", "Enter the Purpose first.")
+            self.purpose_edit.setFocus()
+            return
+        new_no = self.pr_no_edit.text().strip()
+        if not new_no:
+            QMessageBox.warning(self, "PR/JR No. required", "PR/JR No. can't be blank.")
+            return
+        if db.pr_no_taken(self.batch_id, new_no, self.pr_header_id):
+            QMessageBox.warning(self, "PR/JR No. already used",
+                                f"{new_no} is already used by another PR/JR in this plan.")
+            return
         unchanged = (
-            not lines
-            and self.purpose_edit.currentText() == (current["purpose"] or "")
+            new_no == (current["pr_no"] or "")
+            and self.kind_combo.currentData() == db.pr_kind(
+                current, db.pr_lines_for(self.pr_header_id))
+            and not lines
+            and self.purpose_edit.text() == (current["purpose"] or "")
             and self.delivery_edit.text() == (current["delivery_period"] or "")
-            and self.fund_source_edit.text() == (current["fund_source"] or "")
-            and self.stock_no_edit.text() == (current["stock_no"] or "")
+            and self.fund_source_edit.currentText() == (current["fund_source"] or "")
         )
         if unchanged:
             QMessageBox.information(self, "Nothing changed",
                                     "Tick at least one item to add, or edit a field.")
             return
-        if included_rows:
-            existing = db.pr_lines_for(self.pr_header_id)
-            existing_kinds = {db.is_jr_title(ln["accounting_title"]) for ln in existing}
-            new_kinds = {db.is_jr_title(r["accounting_title"]) for r in included_rows}
-            if len(existing_kinds | new_kinds) > 1:
-                QMessageBox.warning(
-                    self, "Can't combine PR and JR",
-                    "This PR/JR already contains items of one type. The item(s) "
-                    "you ticked belong to the other type (regular vs. R & M / "
-                    "Job Request) and can't be added here — save them as a "
-                    "separate PR/JR instead.")
-                return
         if lines:
             db.add_pr_lines(self.pr_header_id, self.batch_id, lines)
-        db.update_pr_purpose(self.pr_header_id, self.purpose_edit.currentText())
+        db.update_pr_no(self.pr_header_id, new_no)
+        db.update_pr_kind(self.pr_header_id, self.kind_combo.currentData())
+        db.update_pr_purpose(self.pr_header_id, self.purpose_edit.text())
         db.update_pr_extra(self.pr_header_id, delivery_period=self.delivery_edit.text(),
-                           fund_source=self.fund_source_edit.text(),
-                           stock_no=self.stock_no_edit.text())
+                           fund_source=self.fund_source_edit.currentText(),
+                           stock_no=current["stock_no"] or "")
         self.accept()
 
     def showEvent(self, event):
@@ -384,43 +422,29 @@ class PRScreen(QWidget):
     def __init__(self):
         super().__init__()
         self.batch_id = None
+        self._months = []
         self._build_ui()
 
     def _build_ui(self):
         root = QVBoxLayout(self)
         root.setSpacing(10)
 
-        self.banner = QLabel()
-        self.banner.setWordWrap(True)
-        self.banner.setStyleSheet(
-            "font-size: 14px; font-weight: bold; padding: 8px 12px; border-radius: 6px;"
-        )
+        self.banner = style.make_banner()
         root.addWidget(self.banner)
-
-        self.count_label = QLabel()
-        self.count_label.setObjectName("onBg")
-        self.count_label.setStyleSheet("font-size: 13px;")
-        root.addWidget(self.count_label)
 
         bar = QHBoxLayout()
         self.new_btn = QPushButton("New PR/JR…")
         self.new_btn.clicked.connect(self._new_pr)
         bar.addWidget(self.new_btn)
-        self.edit_btn = QPushButton("Edit PR/JR")
-        self.edit_btn.setObjectName("secondary")
-        self.edit_btn.clicked.connect(self._edit_pr)
-        bar.addWidget(self.edit_btn)
-        self.del_btn = QPushButton("Delete PR/JR")
-        self.del_btn.clicked.connect(self._delete_pr)
-        bar.addWidget(self.del_btn)
         bar.addStretch()
-        self.gen_btn = QPushButton("Generate PR/JR")
-        self.gen_btn.clicked.connect(self._generate)
+        self.gen_btn = QPushButton("Generate  ▾")
+        self.gen_btn.setObjectName("secondary")
+        self.gen_btn.clicked.connect(self._show_generate_menu)
         bar.addWidget(self.gen_btn)
-        self.rsq_btn = QPushButton("Generate RSQ")
-        self.rsq_btn.clicked.connect(self._generate_rsq)
-        bar.addWidget(self.rsq_btn)
-        root.addLayout(bar)
+        self.bar_widget = QWidget()
+        bar.setContentsMargins(0, 0, 0, 0)
+        self.bar_widget.setLayout(bar)
+        root.addWidget(self.bar_widget)
 
         self.table = QTableWidget(0, len(COLS))
         self.table.setHorizontalHeaderLabels(COLS)
@@ -431,34 +455,45 @@ class PRScreen(QWidget):
         hh.setDefaultAlignment(Qt.AlignCenter | Qt.AlignVCenter)
         hh.setMinimumHeight(34)
         self.table.verticalHeader().setVisible(False)
-        self.table.verticalHeader().setDefaultSectionSize(26)
+        self.table.verticalHeader().setDefaultSectionSize(28)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setSelectionMode(QTableWidget.SingleSelection)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.setAlternatingRowColors(True)
         self.table.setShowGrid(False)
         self.table.cellDoubleClicked.connect(self._on_row_double_clicked)
+        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._show_row_menu)
         root.addWidget(self.table, stretch=1)
+
+        self.empty = NoPlanWidget()
+        root.addWidget(self.empty, stretch=1)
 
     def refresh(self):
         self.batch_id = db.get_active_batch()
+        has = self.batch_id is not None
+        self.empty.setVisible(not has)
+        self.bar_widget.setVisible(False)
+        if not has:
+            self.banner.setVisible(False)
+            self.table.setVisible(False)
+            self.table.setRowCount(0)
+            for b in (self.new_btn, self.gen_btn):
+                b.setEnabled(False)
+            return
 
         status = db.checking_status(self.batch_id)
         self._set_banner(status)
         balanced = bool(status["balanced"])
+        self.bar_widget.setVisible(balanced)
 
         self.new_btn.setEnabled(balanced)
         self.table.setVisible(balanced)
-        self.count_label.setVisible(balanced)
         if balanced:
             self._load_table()
         else:
             self.table.setRowCount(0)
-            self.count_label.clear()
-            self.edit_btn.setEnabled(False)
-            self.del_btn.setEnabled(False)
             self.gen_btn.setEnabled(False)
-            self.rsq_btn.setEnabled(False)
 
     def _set_banner(self, status):
         from ui.status import banner_qss
@@ -482,10 +517,12 @@ class PRScreen(QWidget):
         prs = db.pr_list(self.batch_id)
         grand = 0.0
         last_month = None
+        self._months = []
         for g in prs:
             month = g["month"] or ""
             if month != last_month:
                 self._insert_month_header(month)
+                self._months.append(month)
                 last_month = month
 
             ri = self.table.rowCount()
@@ -508,12 +545,7 @@ class PRScreen(QWidget):
                     item.setTextAlignment(Qt.AlignCenter | Qt.AlignVCenter)
                 self.table.setItem(ri, c, item)
 
-        have = bool(prs)
-        self.edit_btn.setEnabled(have)
-        self.del_btn.setEnabled(have)
-        self.gen_btn.setEnabled(have)
-        self.rsq_btn.setEnabled(have)
-        self.count_label.setText(f"{len(prs)} PR(s)  ·  Total ₱{grand:,.2f}")
+        self.gen_btn.setEnabled(bool(prs))
 
     def _insert_month_header(self, month):
         ri = self.table.rowCount()
@@ -530,11 +562,30 @@ class PRScreen(QWidget):
         label.setStyleSheet(f"color: {p['header_text']}; background: transparent;")
         lay.addWidget(label)
         lay.addStretch()
-        rca_btn = QPushButton("Generate RCA")
-        rca_btn.clicked.connect(lambda _=False, m=month: self._generate_rca(m))
-        lay.addWidget(rca_btn)
         self.table.setCellWidget(ri, 0, row)
-        self.table.setRowHeight(ri, 50)
+        self.table.setRowHeight(ri, 34)
+
+    def _show_generate_menu(self):
+        menu = QMenu(self)
+        menu.addAction("PR/JR", self._generate)
+        menu.addAction("RSQ", self._generate_rsq)
+        if self._months:
+            sbr = menu.addMenu("SBR (cash advance)")
+            for m in self._months:
+                sbr.addAction((m or "(no month)").title(),
+                              lambda _=False, m=m: self._generate_rca(m))
+        menu.exec(self.gen_btn.mapToGlobal(QPoint(0, self.gen_btn.height())))
+
+    def _show_row_menu(self, pos):
+        row = self.table.rowAt(pos.y())
+        it = self.table.item(row, 0) if row >= 0 else None
+        if it is None or it.data(Qt.UserRole) is None:
+            return
+        self.table.selectRow(row)
+        menu = QMenu(self)
+        menu.addAction("Edit PR/JR", self._edit_pr)
+        menu.addAction("Delete PR/JR", self._delete_pr)
+        menu.exec(self.table.viewport().mapToGlobal(pos))
 
     def _selected_pr_id(self):
         row = self.table.currentRow()
@@ -585,13 +636,16 @@ class PRScreen(QWidget):
         db.delete_pr(pr_id)
         self._load_table()
 
-    def _pr_ids_choice(self, verb):
+    def _pr_ids_choice(self, what):
+        """-> (proceed, pr_ids). A selected row: just that PR/JR, no question. Nothing
+        selected: ask whether to generate everything; No means don't generate at all."""
         sel = self._selected_pr_id()
-        if sel is not None and QMessageBox.question(
-                self, "Which PR/JRs?",
-                f"{verb} only the selected PR/JR?  (No = all)") == QMessageBox.Yes:
-            return [sel]
-        return None
+        if sel is not None:
+            return True, [sel]
+        yes = QMessageBox.question(
+            self, "Generate all?",
+            f"No PR/JR is selected. Generate {what} for all PR/JRs?") == QMessageBox.Yes
+        return yes, None
 
     def _emit_pdf(self, stem, fn):
         from ui.filepaths import dated_download_path, open_path
@@ -609,7 +663,9 @@ class PRScreen(QWidget):
     def _generate(self):
         if self.batch_id is None:
             return
-        pr_ids = self._pr_ids_choice("Export PR/JR PDF for")
+        proceed, pr_ids = self._pr_ids_choice("the PR/JR")
+        if not proceed:
+            return
         self._emit_pdf("Purchase Requests",
                        lambda p: pr_pdf.generate(self.batch_id, p, pr_ids))
 
@@ -617,7 +673,9 @@ class PRScreen(QWidget):
         if self.batch_id is None:
             return
         import rsq_pdf
-        pr_ids = self._pr_ids_choice("Export RSQ for")
+        proceed, pr_ids = self._pr_ids_choice("the RSQ")
+        if not proceed:
+            return
         self._emit_pdf("Request for Sealed Quotation",
                        lambda p: rsq_pdf.generate(self.batch_id, p, pr_ids))
 

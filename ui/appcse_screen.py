@@ -6,6 +6,7 @@ from PySide6.QtWidgets import (
     QFileDialog, QMessageBox,
 )
 
+import db
 import appcse_convert
 from appcse_convert import PROVISION_RATE
 
@@ -25,9 +26,10 @@ class APPCSEScreen(QWidget):
         root.setSpacing(10)
 
         intro = QLabel(
-            "Import a PS-DBM APP-CSE Excel. Its Part I / Part II items become BPAS rows "
+            "Import a PS-DBM APP-CSE Excel. Its Part I / Part II items become B+ rows "
             "(APP FORM = CSE). Download the result, add your Non-CSE items to balance the "
-            "allotment, then import that file as a plan in Records.")
+            "allotment, then import that file as a plan in Records. No APP-CSE? Download a "
+            "blank B+ Template instead.")
         intro.setObjectName("onBg")
         intro.setWordWrap(True)
         root.addWidget(intro)
@@ -37,10 +39,10 @@ class APPCSEScreen(QWidget):
         self.import_btn.clicked.connect(self._import)
         row.addWidget(self.import_btn)
 
-        self.download_btn = QPushButton("Download as BPAS format")
-        self.download_btn.setEnabled(False)
+        self.download_btn = QPushButton()
         self.download_btn.clicked.connect(self._download)
         row.addWidget(self.download_btn)
+
         row.addStretch()
         root.addLayout(row)
 
@@ -48,14 +50,17 @@ class APPCSEScreen(QWidget):
         prov_row.setSpacing(6)
         self.provision_cb = QCheckBox("Add provision for price changes (per item):")
         self.provision_cb.setObjectName("onBg")
-        self.provision_cb.setChecked(True)
+        self.provision_cb.setChecked(db.get_setting("provision_enabled", "1") == "1")
         self.provision_cb.toggled.connect(self._on_provision_toggle)
         prov_row.addWidget(self.provision_cb)
 
-        self.rate_edit = QLineEdit(f"{PROVISION_RATE * 100:g}")
+        self.rate_edit = QLineEdit(
+            db.get_setting("provision_pct", f"{PROVISION_RATE * 100:g}"))
+        self.rate_edit.setEnabled(self.provision_cb.isChecked())
         self.rate_edit.setValidator(QDoubleValidator(0.0, 100.0, 2))
         self.rate_edit.setFixedWidth(56)
         self.rate_edit.setAlignment(Qt.AlignRight)
+        self.rate_edit.textChanged.connect(self._save_provision)
         self.rate_edit.textChanged.connect(self._render)
         prov_row.addWidget(self.rate_edit)
         pct = QLabel("%")
@@ -66,8 +71,15 @@ class APPCSEScreen(QWidget):
 
         self.status = QLabel("No APP-CSE imported yet.")
         self.status.setObjectName("onBg")
-        self.status.setStyleSheet("font-weight: bold;")
-        root.addWidget(self.status)
+        self.status.setObjectName("bold")
+        status_row = QHBoxLayout()
+        status_row.addWidget(self.status)
+        status_row.addStretch()
+        self.remove_btn = QPushButton("Remove Imported APP-CSE")
+        self.remove_btn.setObjectName("danger")
+        self.remove_btn.clicked.connect(self._remove_import)
+        status_row.addWidget(self.remove_btn)
+        root.addLayout(status_row)
 
         self.table = QTableWidget(0, len(PREVIEW_COLS))
         self.table.setHorizontalHeaderLabels(PREVIEW_COLS)
@@ -80,15 +92,30 @@ class APPCSEScreen(QWidget):
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         root.addWidget(self.table, stretch=1)
+        self._sync_buttons()
 
     def refresh(self):
         pass
 
     # ---------- helpers ----------
 
+    def _save_provision(self, *_):
+        """Records edit uses this same rate, so it is remembered between sessions."""
+        db.set_setting("provision_enabled", "1" if self.provision_cb.isChecked() else "0")
+        db.set_setting("provision_pct", f"{self._rate_pct():g}")
+
     def _on_provision_toggle(self, on):
         self.rate_edit.setEnabled(on)
+        self._save_provision()
         self._render()
+
+    def _sync_buttons(self):
+        """Download is always available: blank template with no import, the imported
+        rows once an APP-CSE is loaded. Remove only makes sense after an import."""
+        imported = bool(self._raw)
+        self.download_btn.setText("Download B+ Template (APP-CSE)" if imported
+                                  else "Download B+ Template (Blank)")
+        self.remove_btn.setEnabled(imported)
 
     def _rate_pct(self):
         try:
@@ -127,8 +154,21 @@ class APPCSEScreen(QWidget):
             return
         self._raw = rows
         self._skipped = stats.get("skipped", 0)
-        self.download_btn.setEnabled(bool(rows))
+        self._sync_buttons()
         self._render()
+
+    def _remove_import(self):
+        if QMessageBox.question(
+                self, "Remove Imported APP-CSE",
+                "Remove the imported APP-CSE rows from this screen?\n\n"
+                "Your original file and any template you already saved are not touched.",
+        ) != QMessageBox.Yes:
+            return
+        self._raw = []
+        self._skipped = 0
+        self.table.setRowCount(0)
+        self.status.setText("No APP-CSE imported yet.")
+        self._sync_buttons()
 
     def _render(self):
         rows = self._rows()
@@ -137,7 +177,7 @@ class APPCSEScreen(QWidget):
         note = f" (incl. {self._rate_pct():g}% provision)" if self._rate() else ""
         skip = f"   ·   {self._skipped} non-item row(s) skipped" if self._skipped else ""
         self.status.setText(
-            f"{len(rows)} BPAS row(s){note}   ·   "
+            f"{len(rows)} B+ row(s){note}   ·   "
             f"Part I: ₱{p1:,.2f}   ·   Part II: ₱{p2:,.2f}   ·   "
             f"Overall: ₱{p1 + p2:,.2f}{skip}")
         self._load_table(rows)
@@ -159,21 +199,22 @@ class APPCSEScreen(QWidget):
                 self.table.setItem(i, c, it)
 
     def _download(self):
-        if not self._raw:
-            return
-        rows = self._rows()
+        blank = not self._raw
+        rows = [] if blank else self._rows()
         from ui.filepaths import in_downloads
         path, _ = QFileDialog.getSaveFileName(
-            self, "Save BPAS file", in_downloads("BPAS - APP-CSE start.xlsx"),
+            self, "Save B+ Template",
+            in_downloads("B+ Template (blank).xlsx" if blank else "B+ Template.xlsx"),
             "Excel Files (*.xlsx)")
         if not path:
             return
         try:
-            appcse_convert.write_template(rows, path)
+            appcse_convert.write_template(rows, path, self._rate())
         except Exception as exc:
             QMessageBox.critical(self, "Save Failed", f"Could not write the file:\n{exc}")
             return
         QMessageBox.information(
             self, "Saved",
-            f"Saved to:\n{path}\n\nAdd your Non-CSE items to balance the allotment, "
-            "then import this file as a plan in Records.")
+            f"Saved to:\n{path}\n\n"
+            + ("Fill in your items" if blank else "Add your Non-CSE items to balance the allotment")
+            + ", then import this file as a plan in Records.")

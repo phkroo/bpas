@@ -17,7 +17,11 @@ row per month that has a quantity.
 import re
 from decimal import Decimal, ROUND_HALF_UP
 
+import warnings
+
 import openpyxl
+# the files we read are never re-saved, so dropping their extension-based dropdowns is harmless
+warnings.filterwarnings("ignore", message="Data Validation extension", category=UserWarning)
 from openpyxl.styles import Font
 
 from export_excel import HEADERS, FIELDS
@@ -73,43 +77,35 @@ PROVISION_RATE = 0.10   # 10% provision for price changes (APP-CSE), applied per
 
 
 def apply_provision(rows, rate: float = PROVISION_RATE):
-    """Return copies of the rows with unit price + amount raised by `rate` (per item).
-
-    unit_price is the raw price grossed up by `rate` (half-up); amount = unit_price *
-    qty on every line. Each Part's total is then forced to equal the APP-CSE Part
-    GRAND TOTAL exactly (raw_part_total * (1+rate), half-up) by carrying the leftover
-    peso-or-so on the Part's single largest line as a rounding adjustment — that one
-    line is the only place unit_price * qty may not equal amount.
-    """
+    """Amount = unit_price * qty * (1 + rate), half-up, per line. Unit Price is never
+    touched. If a Part's rows don't add up to the APP-CSE Part GRAND TOTAL, 1 centavo is
+    moved on as many lines as needed: lines rounded down the most go up, lines rounded
+    up the most go down."""
     fdec = Decimal(str(1.0 + rate))
     out = [dict(r) for r in rows]
-    for r in out:
-        r["unit_price"] = float(
-            (Decimal(str(r["unit_price"])) * fdec).quantize(_CENT, rounding=ROUND_HALF_UP))
-        r["total_amount"] = _mul_money(r["unit_price"], r["qty"])
-
     for part in ("PART I", "PART II"):
         idxs = [i for i, r in enumerate(out) if r["app_cs"] == part]
         if not idxs:
             continue
+        exact = {i: Decimal(str(rows[i]["unit_price"])) * Decimal(str(rows[i]["qty"])) * fdec
+                 for i in idxs}
+        for i in idxs:
+            out[i]["total_amount"] = float(exact[i].quantize(_CENT, rounding=ROUND_HALF_UP))
+
         raw_total = _dsum(rows[i]["total_amount"] for i in idxs)
-        target = _money(raw_total * fdec)                       # matches form GRAND TOTAL
-        current = _dsum(out[i]["total_amount"] for i in idxs)
-        delta = _money(Decimal(str(target)) - current)
-        if not delta:
+        target = Decimal(str(_money(raw_total * fdec)))          # form GRAND TOTAL
+        steps = int((target - _dsum(out[i]["total_amount"] for i in idxs)) / _CENT)
+        if not steps:
             continue
-        j = max(idxs, key=lambda i: out[i]["total_amount"])
-        out[j]["total_amount"] = _money(out[j]["total_amount"] + delta)
+        if abs(steps) > len(idxs):
+            raise ValueError(f"{part}: rows differ from the APP-CSE total by {steps} "
+                             "centavos. This is not rounding, check prices/quantities.")
+        ranked = sorted(idxs, reverse=steps > 0,
+                        key=lambda i: exact[i] - Decimal(str(out[i]["total_amount"])))
+        for i in ranked[:abs(steps)]:
+            out[i]["total_amount"] = float(
+                Decimal(str(out[i]["total_amount"])) + (_CENT if steps > 0 else -_CENT))
     return out
-
-
-def convert(appcse_path: str, out_path: str, school_text: str = "",
-            provision: bool = True) -> dict:
-    rows, stats = parse(appcse_path, school_text)
-    if provision:
-        rows = apply_provision(rows)
-    write_template(rows, out_path)
-    return stats
 
 
 def parse(appcse_path: str, school_text: str = ""):
@@ -177,7 +173,8 @@ def parse(appcse_path: str, school_text: str = ""):
                 "item_description": desc,
                 "gad_category": "",
                 "accounting_title": "",
-                "mode_of_procurement": "PS-DBM" if section == "PART I" else "",
+                "mode_of_procurement": "Negotiated Procurement - Agency to Agency"
+                                      if section == "PART I" else "",
                 "app_for": "CSE",
                 "app_cs": section,
                 "unit_price": _money(price),
@@ -202,7 +199,7 @@ def parse(appcse_path: str, school_text: str = ""):
     return wfp_rows, stats
 
 
-def write_template(rows, path):
+def write_template(rows, path, rate: float = 0.0):
     import xlsx_lists
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -215,11 +212,14 @@ def write_template(rows, path):
             if field in xlsx_lists.NUMBER_FIELDS:
                 value = xlsx_lists.money(value)         # real number, 2 decimals
             elif field == "unit":
-                value = xlsx_lists.cap_first(value)     # "pcs" -> "Pcs"
+                value = xlsx_lists.cap_first(value)
             ws.cell(row=ri, column=ci, value=value)
     for ci in range(1, len(HEADERS) + 1):
         ws.column_dimensions[openpyxl.utils.get_column_letter(ci)].width = 22
-    xlsx_lists.apply_validations(
-        wb, ws, last_row=max(xlsx_lists.LAST_ROW, len(rows) + 1),
-        extra=xlsx_lists.data_values(rows))
+    last_row = xlsx_lists.table_last_row(len(rows))
+    xlsx_lists.apply_validations(wb, ws, last_row=last_row, extra=xlsx_lists.data_values(rows))
+    xlsx_lists.add_amount_table(wb, ws, last_row, multiplier=1.0 + rate)
+    # the stored Amount (with the centavo adjustment) overrides the formula on data rows
+    for ri, r in enumerate(rows, start=2):
+        ws.cell(row=ri, column=xlsx_lists.AMOUNT_COL).value = xlsx_lists.money(r["total_amount"])
     wb.save(path)

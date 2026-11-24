@@ -11,7 +11,7 @@ def _mark_path(s: float) -> QPainterPath:
     font = QFont("Segoe UI Black")
     font.setStyleHint(QFont.SansSerif)
     font.setWeight(QFont.Black)
-    font.setPixelSize(100)
+    font.setPointSize(75)               # size is irrelevant: the shape is rescaled below
     b = QPainterPath()
     b.addText(0, 0, font, "B")
 

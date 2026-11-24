@@ -5,8 +5,10 @@ request letter, then the Breakdown of Expenses. QTextDocument -> QPdfWriter,
 A4 portrait.
 """
 
+from datetime import datetime
+
 import db
-from doc_header import deped_header_html, resolve_division, resolve_school
+from doc_header import deped_header_html, resolve_school
 
 MIN_ROWS = 8
 
@@ -24,7 +26,6 @@ def _sig_name(sigs, keyword):
 
 
 def build_cashadv_html(sigs, month, ca_date, lines, breakdown, plan, info) -> str:
-    division = resolve_division(info)
     school = resolve_school(plan, info)
     year = db.get_allotment()["calendar_year"] or ""
     month = (month or "").title()
@@ -32,7 +33,12 @@ def build_cashadv_html(sigs, month, ca_date, lines, breakdown, plan, info) -> st
     head_n = plan.get("school_head") or ""
     head_d = "School Head"
     appr_n, appr_d = _sig_name(sigs, "approved")
+    if not appr_n:                       # nothing saved in Setup: the preloaded SDS
+        from sig_defaults import SDS_NAME
+        appr_n = SDS_NAME
     superintendent = appr_n or "SCHOOLS DIVISION SUPERINTENDENT"
+    if not ca_date:
+        ca_date = datetime.now().strftime("%B %d, %Y")
 
     # ---------- breakdown of expenses ----------
     b_rows = []
@@ -106,16 +112,15 @@ def build_cashadv_html(sigs, month, ca_date, lines, breakdown, plan, info) -> st
     total = sum(ln["amount"] or 0 for ln in lines)
 
     return f"""
-{deped_header_html(plan, info)}
+{deped_header_html(plan, info, school_font="tahoma")}
 <br>
 <table width='100%' style='font-size:9pt'>
   <tr><td></td><td align='right'>Date: <b>{ca_date}</b></td></tr>
 </table>
 <br>
 <div style='font-size:9pt'>
-DR. {superintendent}<br>
-Schools Division Superintendent<br>
-{division}
+{superintendent}<br>
+Schools Division Superintendent
 </div>
 <br>
 <div style='font-size:9pt'>Ma'am/Sir:</div>
@@ -149,15 +154,16 @@ ADVANCE</b> for our SCHOOL MOOE (Maintenance and Other Operating Expenses)
         <i>{head_d or 'School Head'}</i></td></tr>
 </table>
 <br>
-<div style='font-size:9pt'><b>APPROVED:</b></div>
 <table width='100%' style='font-size:9pt'>
   <tr><td width='55%'></td>
+      <td align='center'><b>APPROVED:</b></td></tr>
+  <tr><td></td>
       <td align='center' style='padding-top:28px'>
         <b style='border-bottom:1px solid #000'>&nbsp;{appr_n.upper()}&nbsp;</b><br>
         <i>{appr_d or 'Schools Division Superintendent'}</i></td></tr>
 </table>
 <div style='page-break-before: always;'></div>
-{deped_header_html(plan, info)}
+{deped_header_html(plan, info, school_font="tahoma")}
 <br>
 {breakdown_table}
 """

@@ -12,8 +12,10 @@ QTextDocument -> QPdfWriter, A4 portrait.
 from datetime import date
 
 import db
+from doc_header import deped_header_html
 
 MIN_ROWS = 10
+MIN_JR_LINES = 14      # text lines the JR description box always has room for
 
 
 def _num(v):
@@ -34,24 +36,33 @@ def _sig(sigs, keyword):
 
 def _display_date(raw):
     if not raw:
-        return date.today().strftime("%d-%b-%y")
+        return date.today().strftime("%m-%d-%Y")
     return raw
+
+
+# Records keeps the level as Elementary / Junior High / Senior High; the form spells it out.
+_LEVEL_LABEL = {"elementary": "Elementary", "junior high": "Junior High School",
+                "senior high": "Senior High School"}
+
+
+def _level_label(plan) -> str:
+    """The plan's level from Records as the form wants it (blank when the plan has none)."""
+    level = (plan.get("level") or "").strip()
+    return _LEVEL_LABEL.get(level.lower(), level)
 
 
 def _header_common(header, plan, info, is_jr):
     """Fields shared by the PR and JR NGAS templates."""
-    division = (info.get("division") or "").strip()
-    if division and "division" not in division.lower():
-        division = f"Schools Division of {division}"
     school = plan.get("school_name") or info.get("school_name") or ""
-    dept = f"DepEd-{division or school}"
+    dept = school                              # Department / From: the school
     return {
         "purpose": header["purpose"] or "",
+        "project_title": header.get("_project_title", ""),
         "abc": _money(sum(it["amount"] or 0 for it in header.get("_lines", []))),
         "dept": dept,
-        "office": school,
+        "office": _level_label(plan),            # Office/Section: Elementary / JHS / SHS
         "date_txt": _display_date(header["pr_date"]),
-        "no_label": "JR #.:" if is_jr else "PR No.:",
+        "no_label": "JR No.:" if is_jr else "PR No.:",
         "no_value": header["pr_no"],
         "delivery_period": header["delivery_period"] or "",
         "fund_source": header["fund_source"] or "",
@@ -60,103 +71,153 @@ def _header_common(header, plan, info, is_jr):
 
 
 def build_pr_html(sigs, header, lines, plan, info) -> str:
-    is_jr = bool(lines) and all(db.is_jr_title(it["accounting_title"]) for it in lines)
+    is_jr = db.pr_kind(header, lines) == "JR"
     header = dict(header)
     header["_lines"] = lines
+    if is_jr:
+        return _build_jr_html(header, lines, plan, info, sigs)
+    return _build_pr_table_html(header, lines, plan, info, sigs)
+
+
+# Department / Office rows, the item list and the signature rows share one table: an
+# 8-column grid whose column edges line up (widths in %). Project Title and ABC stay
+# as plain lines above it.
+GRID = (7, 8, 10, 19, 11, 11, 6, 7, 9, 12)
+FORM_FONT = "font-family:'Segoe UI',sans-serif; font-size:12pt"
+
+
+def _spacer_row():
+    """First row of the grid: fixes the 8 column widths, takes up no visible height."""
+    cells = "".join(
+        f"<td width='{w}%' style='border:none; padding:0; font-size:1px'></td>" for w in GRID)
+    return f"<tr style='font-size:1px'>{cells}</tr>"
+
+
+# Purpose cell: 8 of 10 grid columns of the A4 text width (182 mm), less cell padding.
+_PURPOSE_W_PT = 182 * 0.8 / 25.4 * 72 - 8
+
+
+def _two_lines(text):
+    """Purpose text, padded with a blank line when it fits on one line so the row always
+    has room for two lines (a longer purpose just wraps onto the second line)."""
+    from PySide6.QtGui import QFont, QFontMetricsF
+    text = text or ""
+    font = QFont("Segoe UI")
+    font.setPixelSize(16)                       # 12 pt at 96 dpi
+    width_pt = QFontMetricsF(font).horizontalAdvance(text) * 72 / 96
+    return text + ("<br>&nbsp;" if width_pt <= _PURPOSE_W_PT else "")
+
+
+def _sig_rows(sigs):
     req_n, req_d = _sig(sigs, "request")
     rec_n, rec_d = _sig(sigs, "recommend")
     app_n, app_d = _sig(sigs, "approve")
-    sig_block = (
-        "<table border='1' cellspacing='0' cellpadding='6' width='100%'"
-        " style='border-collapse:collapse; font-size:9pt'>"
-        "<tr><td width='15%' style='white-space:nowrap'></td><td>Requested By:</td>"
-        "<td>Recommending Approval:</td><td>Approved By:</td></tr>"
-        "<tr><td style='white-space:nowrap'><b>Signature :</b></td>"
-        "<td></td><td></td><td></td></tr>"
-        "<tr><td style='white-space:nowrap'><b>Printed Name :</b></td>"
-        f"<td width='33%'>{req_n}</td><td width='33%'>{rec_n}</td>"
-        f"<td width='33%'>{app_n}</td></tr>"
-        "<tr><td style='white-space:nowrap'><b>Designation :</b></td>"
-        f"<td width='33%'>{req_d}</td><td width='33%'>{rec_d}</td>"
-        f"<td width='33%'>{app_d}</td></tr>"
-        "</table>"
+    return (
+        "<tr><td colspan='2' valign='bottom'><b>Signature :</b></td>"
+        "<td colspan='2' valign='top'>Requested By:<br>&nbsp;<br>&nbsp;<br>&nbsp;</td>"
+        "<td colspan='3' valign='top'>Recommending Approval:</td>"
+        "<td colspan='3' valign='top'>Approved By:</td></tr>"
+        f"<tr><td colspan='2'><b>Printed Name :</b></td><td colspan='2'>{req_n}</td>"
+        f"<td colspan='3'>{rec_n}</td><td colspan='3'>{app_n}</td></tr>"
+        f"<tr><td colspan='2'><b>Designation :</b></td><td colspan='2'>{req_d}</td>"
+        f"<td colspan='3'>{rec_d}</td><td colspan='3'>{app_d}</td></tr>"
     )
-    if is_jr:
-        return _build_jr_html(header, lines, plan, info, sig_block)
-    return _build_pr_table_html(header, lines, plan, info, sig_block)
 
 
-def _build_pr_table_html(header, lines, plan, info, sig_block) -> str:
+def _build_pr_table_html(header, lines, plan, info, sigs=None) -> str:
     f = _header_common(header, plan, info, is_jr=False)
 
     body = []
-    total = 0.0
     for i, it in enumerate(lines, start=1):
-        total += it["amount"] or 0
         body.append(
             "<tr>"
             f"<td align='center'>{i}</td>"
             f"<td align='center'>{_num(it['qty'])}</td>"
             f"<td align='center'>{it['unit'] or ''}</td>"
-            f"<td><b>{it['item_description'] or ''}</b></td>"
+            f"<td colspan='2'><b>{it['item_description'] or ''}</b></td>"
             f"<td align='center'>{f['stock_no']}</td>"
-            f"<td align='right'>{_money(it['unit_price'])}</td>"
-            f"<td align='right'>{_money(it['amount'])}</td></tr>"
+            f"<td colspan='2' align='right'>{_money(it['unit_price'])}</td>"
+            f"<td colspan='2' align='right'>{_money(it['amount'])}</td></tr>"
         )
-    for _ in range(max(0, MIN_ROWS - len(lines))):
-        body.append(
-            "<tr><td>&nbsp;</td><td></td><td></td><td></td><td></td>"
-            "<td></td><td></td></tr>"
-        )
+    # "NOTHING FOLLOWS" sits in the Item Description column on the row right after the
+    # last item; blank rows then pad the table out to MIN_ROWS.
     body.append(
-        "<tr><td colspan='7' align='center'><i>**** NOTHING FOLLOWS ****</i></td></tr>"
+        "<tr><td>&nbsp;</td><td></td><td></td>"
+        "<td colspan='2' align='center'><i>**** NOTHING FOLLOWS ****</i></td>"
+        "<td></td><td colspan='2'></td><td colspan='2'></td></tr>"
     )
+    for _ in range(max(0, MIN_ROWS - len(lines) - 1)):
+        body.append(
+            "<tr><td>&nbsp;</td><td></td><td></td><td colspan='2'></td>"
+            "<td></td><td colspan='2'></td><td colspan='2'></td></tr>"
+        )
 
     return f"""
-<div style='font-size:9pt'>NGAS - New Government Accounting System</div>
+<div style="font-family:'Segoe UI',sans-serif; font-size:10pt">NGAS - New Government Accounting System</div>
+{deped_header_html(plan, info)}
 <br>
-<div align='center' style='font-size:14pt'><b>PURCHASE REQUEST</b></div>
-<div align='center' style='font-size:11pt'>DEPARTMENT OF EDUCATION</div>
-<div align='center' style='font-size:11pt'>{f['dept']}</div>
-<br>
-<table width='100%' style='font-size:9pt'>
-  <tr><td width='16%' valign='top'><b>Project Title:</b></td><td>{f['purpose']}</td></tr>
+<div align='center' style="font-family:'Segoe UI',sans-serif; font-size:14pt"><b>PURCHASE REQUEST</b></div>
+<br><br>
+<table width='100%' style="{FORM_FONT}">
+  <tr><td width='16%' valign='top'><b>Project Title:</b></td><td>{f['project_title']}</td></tr>
 </table>
 <br>
-<table width='100%' style='font-size:9pt'>
+<table width='100%' style="{FORM_FONT}">
   <tr><td width='16%'><b>ABC:</b></td><td>{f['abc']}</td></tr>
 </table>
-<br>
-<table border='1' cellspacing='0' cellpadding='4' width='100%'
-       style='border-collapse:collapse; font-size:9pt'>
+<br><br>
+<table border='3' cellspacing='0' cellpadding='4' width='100%'
+       style="border-collapse:collapse; border-color:#444; {FORM_FONT}">
+  {_spacer_row()}
   <tr>
-    <td width='16%'><b>Department:</b></td><td width='17%'>{f['dept']}</td>
-    <td width='16%'><b>{f['no_label']}</b></td><td width='17%'>{f['no_value']}</td>
-    <td width='16%'><b>Date:</b></td><td width='18%'>{f['date_txt']}</td>
+    <td colspan='2'><b>Department:</b></td><td colspan='3'>{f['dept']}</td>
+    <td><b>{f['no_label']}</b></td><td colspan='2'>{f['no_value']}</td>
+    <td><b>Date:</b></td><td>{f['date_txt']}</td>
   </tr>
   <tr>
-    <td><b>Office/Section:</b></td><td>{f['office']}</td>
-    <td><b>Delivery Period:</b></td><td>{f['delivery_period']}</td>
+    <td colspan='2'><b>Office/Section:</b></td><td colspan='3'>{f['office']}</td>
+    <td><b>Delivery Period:</b></td><td colspan='2'>{f['delivery_period']}</td>
     <td><b>Fund Source:</b></td><td>{f['fund_source']}</td>
   </tr>
-</table>
-<table border='1' cellspacing='0' cellpadding='4' width='100%'
-       style='border-collapse:collapse; font-size:9pt'>
-  <thead>
-  <tr align='center' style='background:#e8e8e8'>
-    <th width='7%'>ITEM<br>NO.</th><th width='8%'>QTY.</th>
-    <th width='12%'>UNIT OF<br>ISSUE</th><th>ITEM DESCRIPTION</th>
-    <th width='10%'>STOCK<br>NO.</th><th width='13%'>EST. UNIT<br>COST</th>
-    <th width='13%'>EST. TOTAL<br>COST</th></tr>
-  </thead>
+  <tr style='background:#e8e8e8'>
+    <td align='center'><b>ITEM<br>NO.</b></td><td align='center'><b>QTY.</b></td>
+    <td align='center'><b>UNIT OF<br>ISSUE</b></td>
+    <td colspan='2' align='center'><b>ITEM DESCRIPTION</b></td>
+    <td align='center'><b>STOCK<br>NO.</b></td>
+    <td colspan='2' align='center'><b>EST. UNIT<br>COST</b></td>
+    <td colspan='2' align='center'><b>EST. TOTAL<br>COST</b></td>
+  </tr>
   {''.join(body)}
+  <tr><td colspan='2' valign='top'><b>Purpose:</b></td><td colspan='8' valign='top'>{_two_lines(f['purpose'])}</td></tr>
+  {_sig_rows(sigs or [])}
 </table>
-<br>
-{sig_block}
 """
 
 
-def _build_jr_html(header, lines, plan, info, sig_block) -> str:
+JR_GRID = (15, 30, 30, 25)
+
+
+def _jr_spacer_row():
+    cells = "".join(
+        f"<td width='{w}%' style='border:none; padding:0; font-size:1px'></td>" for w in JR_GRID)
+    return f"<tr style='font-size:1px'>{cells}</tr>"
+
+
+def _jr_sig_rows(sigs):
+    req_n, req_d = _sig(sigs, "request")
+    rec_n, rec_d = _sig(sigs, "recommend")
+    app_n, app_d = _sig(sigs, "approve")
+    return (
+        "<tr><td valign='bottom'><b>Signature :</b></td>"
+        "<td valign='top'>Requested By:<br>&nbsp;<br>&nbsp;<br>&nbsp;</td>"
+        "<td valign='top'>Recommending Approval:</td>"
+        "<td valign='top'>Approved By:</td></tr>"
+        f"<tr><td><b>Printed Name :</b></td><td>{req_n}</td><td>{rec_n}</td><td>{app_n}</td></tr>"
+        f"<tr><td><b>Designation :</b></td><td>{req_d}</td><td>{rec_d}</td><td>{app_d}</td></tr>"
+    )
+
+
+def _build_jr_html(header, lines, plan, info, sigs=None) -> str:
     f = _header_common(header, plan, info, is_jr=True)
 
     # Group ticked items by their general_description (matches how the real
@@ -179,36 +240,42 @@ def _build_jr_html(header, lines, plan, info, sig_block) -> str:
         )
 
     desc_parts = []
+    n_lines = 0
     if f["purpose"]:
         desc_parts.append(f"<div>{f['purpose']}</div><br>")
+        n_lines += 2
     for gd in order:
         if gd:
             desc_parts.append(f"<div><b>{gd}</b></div>")
+            n_lines += 1
         desc_parts.append("<div>" + "<br>".join(groups[gd]) + "</div><br>")
+        n_lines += len(groups[gd]) + 1
     desc_parts.append("<div align='center'><i>**** NOTHING FOLLOWS ****</i></div>")
+    n_lines += 1
+    # like the PR's minimum rows: a short job still prints as a full-size form
+    desc_parts.append("<br>&nbsp;" * max(0, MIN_JR_LINES - n_lines))
     description_html = "".join(desc_parts)
 
     return f"""
-<div style='font-size:9pt'>NGAS - New Government Accounting System</div>
+<div style="font-family:'Segoe UI',sans-serif; font-size:10pt">NGAS - New Government Accounting System</div>
+{deped_header_html(plan, info)}
 <br>
-<div align='center' style='font-size:14pt'><b>JOB REQUEST</b></div>
-<div align='center' style='font-size:11pt'>DEPARTMENT OF EDUCATION</div>
-<div align='center' style='font-size:11pt'>{f['dept']}</div>
-<br>
-<table width='100%' style='font-size:9pt'>
-  <tr><td width='16%' valign='top'><b>Project:</b></td><td><b>{f['purpose']}</b></td></tr>
+<div align='center' style="font-family:'Segoe UI',sans-serif; font-size:14pt"><b>JOB REQUEST</b></div>
+<br><br>
+<table width='100%' style="{FORM_FONT}">
+  <tr><td width='16%' valign='top'><b>Project:</b></td><td><b>{f['project_title']}</b></td></tr>
 </table>
 <br>
-<table width='100%' style='font-size:9pt'>
+<table width='100%' style="{FORM_FONT}">
   <tr><td width='16%'><b>ABC:</b></td><td><b>{f['abc']}</b></td></tr>
 </table>
-<br>
-<table border='0' width='100%' style='font-size:9pt'>
+<br><br>
+<table border='0' width='100%' style="{FORM_FONT}">
   <tr>
-    <td width='16%'><b>From:</b></td>
-    <td width='34%'><u>{f['dept']}</u></td>
-    <td width='16%'><b>{f['no_label']}</b></td>
-    <td width='34%'>{f['no_value']}</td>
+    <td width='14%'><b>From:</b></td>
+    <td width='61%'><u>{f['dept']}</u></td>
+    <td width='10%'><b>{f['no_label']}</b></td>
+    <td width='15%'>{f['no_value']}</td>
   </tr>
   <tr>
     <td><b>Section/Unit:</b></td>
@@ -218,32 +285,25 @@ def _build_jr_html(header, lines, plan, info, sig_block) -> str:
   </tr>
 </table>
 <br>
-<table border='1' cellspacing='0' cellpadding='6' width='100%'
-       style='border-collapse:collapse; font-size:9pt'>
-  <thead>
-  <tr align='center' style='background:#e8e8e8'>
-    <th width='75%'>DESCRIPTION OF JOB and / ORDER SERVICES</th>
-    <th width='25%'>Estimated / Total Amount</th>
+<table border='3' cellspacing='0' cellpadding='6' width='100%'
+       style="border-collapse:collapse; border-color:#444; {FORM_FONT}">
+  {_jr_spacer_row()}
+  <tr style='background:#e8e8e8'>
+    <td colspan='3' align='center'><b>DESCRIPTION OF JOB and / ORDER SERVICES</b></td>
+    <td align='center'><b>Estimated / Total Amount</b></td>
   </tr>
-  </thead>
   <tr>
-    <td valign='top'>{description_html}</td>
+    <td colspan='3' valign='top'>{description_html}</td>
     <td valign='top' align='right'>&nbsp;</td>
   </tr>
   <tr>
-    <td align='right'><b>Total</b></td>
+    <td colspan='3' align='right'><b>Total</b></td>
     <td align='right'><b>{_money(total)}</b></td>
   </tr>
+  <tr><td valign='top'><b>Purpose:</b></td><td colspan='3' valign='top'>{f['purpose']}</td></tr>
+  <tr><td colspan='4'><b>TERMS &amp; CONDITIONS:</b> Delivery Period - {f['delivery_period']}</td></tr>
+  {_jr_sig_rows(sigs or [])}
 </table>
-<br>
-<table width='100%' style='font-size:9pt'>
-  <tr><td width='16%' valign='top'><b>Purpose:</b></td><td>{f['purpose']}</td></tr>
-</table>
-<div style='font-size:9pt'>
-  <b>TERMS &amp; CONDITIONS:</b> Delivery Period - {f['delivery_period']}
-</div>
-<br>
-{sig_block}
 """
 
 
@@ -266,6 +326,8 @@ def generate(batch_id: int, out_path: str, pr_ids=None):
         if not lines:
             continue
         brk = "page-break-before: always;" if blocks else ""
+        h = dict(h)
+        h["_project_title"] = db.pr_project_title(batch_id, lines)
         html = build_pr_html(sigs, h, lines, plan, info)
         blocks.append(f"<div style='{brk}'>{html}</div>")
 

@@ -6,6 +6,7 @@ from PySide6.QtWidgets import (
 
 import db
 import import_excel
+import xlsx_lists
 
 
 def _amount(text):
@@ -25,13 +26,14 @@ class ImportDialog(QDialog):
         self.setModal(True)
         self.setMinimumWidth(620)
         self._path = None
-        self._kind = None          # "xlsx" | "bpasx"
+        self._kind = None          # "xlsx" | "bpasx" | "bpasx_many"
+        self._paths = None         # the selected files when several plan files are imported
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(12)
 
-        self.choose_btn = QPushButton("Choose File (.xlsx or .bpasx)...")
+        self.choose_btn = QPushButton("Import File (.xlsx or .bpasx)...")
         self.choose_btn.setToolTip(
             "An Excel file in the BPAS template, or a plan file (.bpasx) another "
             "school exported from Records — e.g. to consolidate several schools' plans.")
@@ -61,12 +63,15 @@ class ImportDialog(QDialog):
         comp.setCompletionMode(QCompleter.PopupCompletion)
         self.school_combo.setEnabled(False)
 
-        a = db.get_allotment()
-        self.head_edit = QLineEdit(db.get_school_info()["school_head"])
+        # Deliberately blank, not prefilled from db.get_school_info()/get_allotment()
+        # — those are single GLOBAL settings, so prefilling from them would show
+        # whichever school's head/allotment was last active, for every new import,
+        # regardless of which school this actually is.
+        self.head_edit = QLineEdit("")
         self.head_edit.setPlaceholderText("School head for this plan")
-        self.total_edit = QLineEdit(f"{a['total_allotment']:.2f}" if a["total_allotment"] else "")
+        self.total_edit = QLineEdit("")
         self.total_edit.setPlaceholderText("e.g. 3913000")
-        self.gad_edit = QLineEdit(f"{a['gad_allotment']:.2f}" if a["gad_allotment"] else "")
+        self.gad_edit = QLineEdit("")
         self.gad_edit.setPlaceholderText("e.g. 195650")
 
         form.addRow("School:", self.school_combo)
@@ -75,7 +80,7 @@ class ImportDialog(QDialog):
         form.addRow("GAD Allotment:", self.gad_edit)
         layout.addLayout(form)
 
-        self.import_btn = QPushButton("Import")
+        self.import_btn = QPushButton("Save Plan")
         self.import_btn.setEnabled(False)
         self.import_btn.clicked.connect(self.on_import)
         layout.addWidget(self.import_btn)
@@ -87,12 +92,28 @@ class ImportDialog(QDialog):
 
     def on_choose(self):
         from ui.filepaths import downloads_dir
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Select BPAS File", downloads_dir(),
+        paths, _ = QFileDialog.getOpenFileNames(
+            self, "Select BPAS File(s)", downloads_dir(),
             "BPAS files (*.xlsx *.bpasx);;Excel Files (*.xlsx);;BPAS Plan Files (*.bpasx)"
         )
-        if not path:
+        if not paths:
             return
+        if len(paths) > 1:
+            plans = [p for p in paths if p.lower().endswith(".bpasx")]
+            if len(plans) != len(paths):
+                QMessageBox.information(
+                    self, "Several files",
+                    "Excel templates are imported one at a time (each needs its own school "
+                    "head and allotments). Only the plan files (.bpasx) you selected "
+                    "were kept.")
+            paths = plans
+            if not paths:
+                return
+        if len(paths) > 1:
+            self._show_many(paths)
+            return
+        self._paths = None
+        path = paths[0]
         self._path = path
         self._kind = "bpasx" if path.lower().endswith(".bpasx") else "xlsx"
         self.file_label.setText(path)
@@ -122,6 +143,111 @@ class ImportDialog(QDialog):
             self.detect_label.setText(
                 "Could not detect the school from the file — please pick it above.")
 
+    def _show_many(self, paths):
+        """Several plan files at once: each carries its own school, head and allotments."""
+        self._paths = list(paths)
+        self._path = paths[0]
+        self._kind = "bpasx_many"
+        self.file_label.setText(f"{len(paths)} plan files selected.")
+        self.detect_label.setText(
+            "Each school's name, head and allotments come from its own file. "
+            "Click Save Plan to import them one after another.")
+        for w in (self.school_combo, self.head_edit, self.total_edit, self.gad_edit):
+            w.setEnabled(False)
+        self.school_combo.setCurrentIndex(0)
+        for e in (self.head_edit, self.total_edit, self.gad_edit):
+            e.clear()
+        self.import_btn.setEnabled(True)
+
+    def _import_many(self):
+        """Import every selected plan file. A bad file never stops the others, and a school
+        that is already in the database is asked about (Replace / Keep both / Skip)."""
+        import json
+        import os
+        import import_plan
+        from PySide6.QtWidgets import QCheckBox
+
+        apply_all = None            # "replace" | "keep" | "skip" once the user ticks "apply to all"
+        report = []                 # (file name, text)
+        counts = {"imported": 0, "replaced": 0, "skipped": 0, "rejected": 0}
+        last_ok = None
+        items_total = 0
+        for path in self._paths:
+            name = os.path.basename(path)
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    b = (json.load(f).get("batch") or {})
+                existing = db.find_batches_for_school(b.get("school_id"), b.get("level_type"))
+            except Exception as exc:
+                counts["rejected"] += 1
+                report.append((name, f"REJECTED: not a readable plan file ({exc})"))
+                continue
+
+            choice = "keep"
+            if existing:
+                choice = apply_all
+                if choice is None:
+                    box = QMessageBox(self)
+                    box.setIcon(QMessageBox.Question)
+                    box.setWindowTitle("School already imported")
+                    box.setText(f"{b.get('school_name') or name} is already in your plans "
+                                f"({len(existing)}).")
+                    box.setInformativeText("Replace it with this file, keep both, or skip this file?")
+                    replace_btn = box.addButton("Replace", QMessageBox.AcceptRole)
+                    keep_btn = box.addButton("Keep both", QMessageBox.ActionRole)
+                    skip_btn = box.addButton("Skip", QMessageBox.RejectRole)
+                    all_cb = QCheckBox("Do the same for the remaining schools already imported")
+                    box.setCheckBox(all_cb)
+                    box.exec()
+                    clicked = box.clickedButton()
+                    choice = ("replace" if clicked is replace_btn
+                              else "keep" if clicked is keep_btn else "skip")
+                    if all_cb.isChecked():
+                        apply_all = choice
+            if choice == "skip":
+                counts["skipped"] += 1
+                report.append((name, "SKIPPED: school already imported"))
+                continue
+
+            try:
+                result = import_plan.import_plan(path)
+            except import_plan.ImportPlanError as exc:
+                counts["rejected"] += 1
+                report.append((name, "REJECTED: " + str(exc).replace("\n", " ")[:300]))
+                continue
+            except Exception as exc:
+                counts["rejected"] += 1
+                report.append((name, f"REJECTED: {exc}"))
+                continue
+
+            items_total += result.imported_count
+            last_ok = result.batch_id
+            if choice == "replace" and existing:
+                for old in existing:
+                    db.delete_batch(old)
+                counts["replaced"] += 1
+                report.append((name, f"REPLACED: {result.imported_count} item(s)"))
+            else:
+                counts["imported"] += 1
+                msg = f"IMPORTED: {result.imported_count} item(s)"
+                if result.unmatched_pr_lines:
+                    msg += f" ({result.unmatched_pr_lines} PR/JR line(s) could not be relinked)"
+                report.append((name, msg))
+
+        if last_ok is not None:
+            db.set_active_batch(last_ok)
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Warning if counts["rejected"] else QMessageBox.Information)
+        box.setWindowTitle("Plans imported")
+        box.setText(f"{counts['imported']} imported, {counts['replaced']} replaced, "
+                    f"{counts['skipped']} skipped, {counts['rejected']} rejected "
+                    f"({items_total:,} item(s)).")
+        box.setDetailedText("\n".join(f"{n}\n    {t}" for n, t in report))
+        box.exec()
+        if last_ok is not None:
+            self.imported.emit()
+            self.accept()
+
     def _show_bpasx_info(self, path):
         """A plan file carries its own school / head / allotment — show them and
         lock the form instead of asking again."""
@@ -135,6 +261,17 @@ class ImportDialog(QDialog):
                 f"Plan file — {b.get('school_name') or '(unnamed school)'}"
                 f"{' — ' + b['level'] if b.get('level') else ''}. "
                 "School, head and allotment come from the file.")
+            # show what the file holds in the (locked) fields, so nothing looks missing
+            school = db.match_school_parts(b.get("level_type"), b.get("iu_code"),
+                                           b.get("school_id"), b.get("school_name"))
+            idx = self.school_combo.findData(school["id"]) if school else -1
+            if idx >= 0:
+                self.school_combo.setCurrentIndex(idx)
+            else:
+                self.school_combo.setCurrentText(b.get("school_name") or "")
+            self.head_edit.setText(b.get("school_head") or "")
+            self.total_edit.setText(f"{float(b.get('total_allotment') or 0):,.2f}")
+            self.gad_edit.setText(f"{float(b.get('gad_allotment') or 0):,.2f}")
         except Exception:
             self.detect_label.setText(
                 "Could not read this plan file — importing it will report the problem.")
@@ -175,7 +312,7 @@ class ImportDialog(QDialog):
         """Strict pre-import check. Any problem blocks the import. True = clean."""
         import difflib
         try:
-            problems = import_excel.check_file(self._path)
+            problems = import_excel.validate_file(self._path)
         except Exception:
             return True          # the real import will report file problems
         if not problems:
@@ -191,9 +328,17 @@ class ImportDialog(QDialog):
                 lines.append(f"• Column A has a different school/input: “{p.value}” — "
                              f"{len(p.rows)} row{'s' if len(p.rows) != 1 else ''} "
                              f"({self._rows_txt(p.rows)})")
+            elif p.kind == "row_error":
+                lines.append(f"• Row {p.rows[0]}: {p.value}")
             elif p.kind == "unknown_school":
                 lines.append(f"• Column A is not a known school: “{p.value}” — "
                              f"{self._rows_txt(p.rows)}")
+            elif p.kind == "gad_missing":
+                lines.append("• GAD Category (column E) is required when PAP Name is "
+                             f"“{xlsx_lists.GAD_PAP}” — {self._rows_txt(p.rows)}")
+            elif p.kind == "gad_not_allowed":
+                lines.append("• GAD Category (column E) must be blank unless PAP Name is "
+                             f"“{xlsx_lists.GAD_PAP}” — {self._rows_txt(p.rows)}")
             else:
                 hint = ""
                 if p.field == "accounting_title":
@@ -203,22 +348,26 @@ class ImportDialog(QDialog):
                 lines.append(f"• {self._FIELD_LABELS.get(p.field, p.field)} not in the "
                              f"dropdown list: “{p.value}” — {self._rows_txt(p.rows)}{hint}")
 
-        cap = 12
+        cap = 15
         shown = lines[:cap] + ([f"• … and {len(lines) - cap} more"] if len(lines) > cap else [])
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Critical)
         box.setWindowTitle("Can't import — fix the file first")
         box.setText(f"{len(problems)} problem(s) found in this file:")
         box.setInformativeText(
-            "\n".join(shown) + "\n\nColumn A must be filled on every row with one "
-            "consistent school, and every dropdown column must use a value from its "
-            "list. Fix the Excel file and import it again.")
+            "\n".join(shown) + "\n\nNothing was imported. Fix the Excel file and import it "
+            "again. Column A must be filled on every row with one consistent school, every "
+            "dropdown column must use a value from its list, and each row's Amount must "
+            "equal unit price x quantity x rate.")
         box.addButton("OK", QMessageBox.AcceptRole)
         box.exec()
         return False
 
     def on_import(self):
         if not self._path:
+            return
+        if self._kind == "bpasx_many":
+            self._import_many()
             return
         if self._kind == "bpasx":
             self._import_bpasx()
@@ -239,6 +388,9 @@ class ImportDialog(QDialog):
 
         try:
             result = import_excel.import_file(self._path, "")
+        except import_excel.ImportBlocked:
+            self._check_excel()          # shows the problems; nothing was imported
+            return
         except Exception as exc:
             QMessageBox.critical(self, "Import Failed", f"Could not import file:\n{exc}")
             return

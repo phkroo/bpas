@@ -1,4 +1,5 @@
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QPoint
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QLineEdit,
     QComboBox, QTableWidget, QTableWidgetItem, QFileDialog, QMessageBox,
@@ -43,12 +44,12 @@ class RecordsScreen(QWidget):
         empty_layout.setAlignment(Qt.AlignCenter)
         empty_layout.setSpacing(16)
         empty_label = QLabel(
-            "No plan yet.\n\nClick \"Import File...\" and choose your BPAS Excel or plan "
-            "file (.bpasx) — the school is read from the file."
+            "No plan yet.\n\nClick \"Import File...\" and choose your B+ Template — "
+            "the school is read from the file."
         )
         empty_label.setAlignment(Qt.AlignCenter)
         empty_label.setObjectName("onBg")
-        empty_label.setStyleSheet("font-size: 16px;")
+        empty_label.setObjectName("emptyNote")
         empty_import_btn = QPushButton("Import File...")
         empty_import_btn.setMinimumSize(200, 44)
         empty_import_btn.clicked.connect(self.import_requested.emit)
@@ -63,10 +64,10 @@ class RecordsScreen(QWidget):
         plan_row.setSpacing(8)
         plan_lbl = QLabel("Plan:")
         plan_lbl.setObjectName("onBg")
-        plan_lbl.setStyleSheet("font-weight: bold;")
+        plan_lbl.setObjectName("bold")
         plan_row.addWidget(plan_lbl)
         self.batch_combo = QComboBox()
-        self.batch_combo.setMinimumWidth(280)
+        self.batch_combo.setMinimumWidth(160)
         self.batch_combo.currentIndexChanged.connect(self._on_plan_changed)
         plan_row.addWidget(self.batch_combo, 1)
 
@@ -85,15 +86,26 @@ class RecordsScreen(QWidget):
         plan_row.addWidget(delete_plan_btn)
         layout.addWidget(self.plan_widget)
 
-        # ---- filters ----
+        # ---- filters (two rows so the screen still fits in half a monitor) ----
         self.filter_widget = QWidget()
-        filter_row = QHBoxLayout(self.filter_widget)
-        filter_row.setContentsMargins(0, 0, 0, 0)
-        filter_row.setSpacing(8)
+        filter_col = QVBoxLayout(self.filter_widget)
+        filter_col.setContentsMargins(0, 0, 0, 0)
+        filter_col.setSpacing(6)
+        top_row, combo_row = QHBoxLayout(), QHBoxLayout()
+        top_row.setSpacing(8); combo_row.setSpacing(8)
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("Search...")
         self.search_input.returnPressed.connect(self.refresh)
-        filter_row.addWidget(self.search_input, 1)
+        top_row.addWidget(self.search_input, 1)
+
+        apply_btn = QPushButton("Search")
+        apply_btn.clicked.connect(self.refresh)
+        top_row.addWidget(apply_btn)
+
+        clear_btn = QPushButton("Clear Filters")
+        clear_btn.setObjectName("secondary")
+        clear_btn.clicked.connect(self.clear_filters)
+        top_row.addWidget(clear_btn)
 
         self.pap_combo = QComboBox()
         self.gad_combo = QComboBox()
@@ -107,22 +119,19 @@ class RecordsScreen(QWidget):
         ]:
             combo.addItem(label, None)
             combo.currentIndexChanged.connect(self.refresh)
-            filter_row.addWidget(combo, 1)
+            combo.setMinimumWidth(100)
+            combo_row.addWidget(combo, 1)
 
-        apply_btn = QPushButton("Search")
-        apply_btn.clicked.connect(self.refresh)
-        filter_row.addWidget(apply_btn)
-
-        clear_btn = QPushButton("Clear Filters")
-        clear_btn.setObjectName("secondary")
-        clear_btn.clicked.connect(self.clear_filters)
-        filter_row.addWidget(clear_btn)
-
-        for w in (self.search_input, self.pap_combo, self.gad_combo,
-                  self.accounting_combo, self.procurement_combo):
-            w.setMinimumWidth(120)
-            w.setMaximumWidth(16777215)
-
+        filter_col.addLayout(top_row)
+        filter_col.addLayout(combo_row)
+        # an explicit minimum, so the one-line layout never stops the window shrinking
+        # to half a screen (it wraps to two lines below that width)
+        self.filter_widget.setMinimumWidth(300)
+        self._filter_parts = (top_row, combo_row, self.search_input,
+                              [self.pap_combo, self.gad_combo, self.accounting_combo, self.procurement_combo],
+                              apply_btn, clear_btn)
+        self._filters_narrow = None
+        self._arrange_filters()
         layout.addWidget(self.filter_widget)
 
         self.table = QTableWidget(0, len(FIELDS))
@@ -133,6 +142,8 @@ class RecordsScreen(QWidget):
         hh.setMinimumHeight(42)
         self.table.setColumnHidden(0, True)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setAlternatingRowColors(True)
+        self.table.setShowGrid(False)
         self.table.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
         self.table.setTextElideMode(Qt.ElideRight)
         self.table.setWordWrap(False)
@@ -143,12 +154,21 @@ class RecordsScreen(QWidget):
         layout.addWidget(self.table)
 
         self.bottom_widget = QWidget()
-        bottom_row = QHBoxLayout(self.bottom_widget)
-        bottom_row.setContentsMargins(0, 0, 0, 0)
+        bottom_col = QVBoxLayout(self.bottom_widget)
+        bottom_col.setContentsMargins(0, 0, 0, 0)
+        bottom_col.setSpacing(6)
+        bottom_row = QHBoxLayout()           # total + flagged count (and the buttons when wide)
+        button_row = QHBoxLayout()           # the buttons on their own line when narrow
+        bottom_col.addLayout(bottom_row)
+        bottom_col.addLayout(button_row)
         self.total_label = QLabel("Total: 0.00")
         self.total_label.setObjectName("onBg")
-        self.total_label.setStyleSheet("font-weight: bold;")
+        self.total_label.setObjectName("bold")
         bottom_row.addWidget(self.total_label)
+        self.flag_label = QLabel("")
+        self.flag_label.setStyleSheet("color: #b42318; font-weight: 600;")
+        self.flag_label.setVisible(False)
+        bottom_row.addWidget(self.flag_label)
         bottom_row.addStretch()
 
         add_btn = QPushButton("Add Row")
@@ -165,17 +185,39 @@ class RecordsScreen(QWidget):
         delete_btn.clicked.connect(self.on_delete_row)
         bottom_row.addWidget(delete_btn)
 
-        export_btn = QPushButton("Export Current View to Excel")
-        export_btn.clicked.connect(self.on_export)
+        from PySide6.QtGui import QAction
+        from PySide6.QtWidgets import QMenu
+        export_btn = QPushButton("Export")
+        export_menu = QMenu(export_btn)
+        export_menu.addAction("Current view to Excel…", self.on_export)
+        self.export_plan_action = export_menu.addAction("Plan file (.bpasx)…", self.on_export_plan)
+        # not setMenu(): a styled button with an attached menu makes Qt log a font warning
+        export_btn.clicked.connect(
+            lambda: export_menu.exec(export_btn.mapToGlobal(QPoint(0, export_btn.height()))))
         bottom_row.addWidget(export_btn)
 
-        self.export_plan_btn = QPushButton("Export Plan (.bpasx)…")
-        self.export_plan_btn.clicked.connect(self.on_export_plan)
-        bottom_row.addWidget(self.export_plan_btn)
-
+        self.bottom_widget.setMinimumWidth(300)     # wraps to two lines below ~960 px; never blocks shrinking
+        self._bottom_parts = (bottom_row, button_row,
+                              [self.total_label, self.flag_label],
+                              [add_btn, edit_row_btn, delete_btn, export_btn])
         layout.addWidget(self.bottom_widget)
+        self._filters_narrow = None          # arrange the filters and the bottom bar for the current width
+        self._arrange_filters()
 
         self._loading = False
+
+    def _arrange_filters(self):
+        from ui.layout_utils import arrange_filter_row, arrange_bottom_bar
+        narrow = self.width() < 960
+        if narrow != self._filters_narrow:
+            self._filters_narrow = narrow
+            arrange_filter_row(*self._filter_parts, narrow)
+            if hasattr(self, "_bottom_parts"):
+                arrange_bottom_bar(*self._bottom_parts, narrow)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._arrange_filters()
 
     def _autofit(self):
         self.table.resizeColumnsToContents()
@@ -291,7 +333,19 @@ class RecordsScreen(QWidget):
         self.table.blockSignals(True)
         self.table.setRowCount(len(rows))
         total = 0.0
+
+        # rows that break the import rules (edited around the checks, a list that changed,
+        # a file/database edited outside B+) are painted red, with the reasons on hover
+        import validation
+        canon = validation.canon_lists()
+        rate = db.get_batch_rate(db.get_active_batch())
+        dark = db.get_setting("ui_theme", "light") == "dark"
+        bad_bg = QColor("#5c2626" if dark else "#fde4e4")
+        bad_fg = QColor("#ffc4c4" if dark else "#9b1c1c")
+        flagged = 0
         for row_idx, item in enumerate(rows):
+            problems = validation.row_problems(item, canon, rate)
+            flagged += bool(problems)
             for col_idx, field in enumerate(FIELDS):
                 value = item[field]
                 if value is None:
@@ -308,11 +362,19 @@ class RecordsScreen(QWidget):
                     cell.setToolTip(text)
                 if field in ("unit_price", "qty", "total_amount"):
                     cell.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                if problems:
+                    cell.setBackground(bad_bg)
+                    cell.setForeground(bad_fg)
+                    cell.setToolTip((text + "\n\n" if text else "") + "Problem:\n• " + "\n• ".join(problems))
                 self.table.setItem(row_idx, col_idx, cell)
             total += item["total_amount"] or 0
         self.table.blockSignals(False)
         self._autofit()
         self.total_label.setText(f"Total: {total:,.2f}  ({len(rows)} row(s))")
+        self.flag_label.setText(f"⚠ {flagged} flagged" if flagged else "")
+        self.flag_label.setStyleSheet("color: %s; font-weight: 600;" % ("#ff9b9b" if dark else "#b42318"))
+        self.flag_label.setToolTip("Red rows break the import rules. Hover a red row to see why.")
+        self.flag_label.setVisible(bool(flagged))
         self._current_rows = rows
 
     _EXPORT_PLAN_TIP = (
@@ -327,8 +389,8 @@ class RecordsScreen(QWidget):
 
     def _update_export_plan_btn(self):
         ok = self._plan_balanced()
-        self.export_plan_btn.setEnabled(ok)
-        self.export_plan_btn.setToolTip(
+        self.export_plan_action.setEnabled(ok)
+        self.export_plan_action.setToolTip(
             self._EXPORT_PLAN_TIP if ok else self._EXPORT_PLAN_LOCKED_TIP)
 
     def _selected_id(self):
@@ -389,11 +451,7 @@ class RecordsScreen(QWidget):
         if not path:
             return
         try:
-            export_excel.export_items(
-                self._current_rows, path,
-                signatories=db.list_signatories("ppmp"),
-                school_info=db.get_school_info(),
-            )
+            export_excel.export_items(self._current_rows, path)
         except Exception as exc:
             QMessageBox.critical(self, "Export Failed", f"Could not export:\n{exc}")
             return

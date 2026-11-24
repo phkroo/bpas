@@ -7,12 +7,15 @@ from PySide6.QtWidgets import (
 )
 
 import db
+from sig_defaults import SIG_DEFAULT_NAMES
 from ui import style
 from ui.tools_screen import ToolsScreen
 
 SIG_COLUMNS = ["Role", "Name", "Designation"]
-SECTIONS = ["School Information", "Signatories",
-            "Account Codes", "Tools", "Admin Access"]
+SECTIONS = ["School Information", "Signatories", "Fund Sources",
+            "Account Codes", "Procurement Modes", "Units", "Schools", "Tools", "Admin Access"]
+NO_SAVE_SECTIONS = ["Tools", "Admin Access"]
+ADMIN_ONLY_SECTIONS = ["Fund Sources", "Account Codes", "Procurement Modes", "Units", "Schools"]
 
 # (doc, tab title, default roles, per_plan). per_plan groups (PR, RSQ) are stored
 # against the active plan; PPMP / SOBP / APP are one global set.
@@ -31,36 +34,7 @@ SIG_GROUPS = [
     ("cashadv", "SBR", ["SH", "Approved By"], True),
 ]
 
-# Real, known default values only (no guessed designations/placeholders — those
-# are documented in the user manual instead). Only used when a doc group has NO
-# signatories saved yet; never overwrites an already-saved row.
-# "auto_name": True means that role always tracks the ACTIVE PLAN's School Head
-# (Records) live — not a fixed person, so it's never overwritten and never stale
-# when the plan changes. Everything else here is one fixed person who does NOT
-# change when the active plan/school changes (signatories are stored once,
-# globally, and simply don't move when you switch plans).
-SIG_DEFAULT_NAMES = {
-    ("ppmp", "prepared by"): {"auto_name": True, "position": "School Head"},
-    ("ppmp", "reviewed by"): {"name": "NICE C. ILARA",
-                              "position": "Administrative Officer IV - Procurement Officer"},
-    ("ppmp", "okay as to fund"): {"name": "JOHANNA MARIE B. SARABIA LPT",
-                                  "position": "Administrative Officer V - Budget Officer"},
-    ("ppmp", "recommending approval"): {
-        "name": "NILITA L. RAGAY EdD",
-        "position": "OIC - Assistant Schools Division Superintendent"},
-    ("ppmp", "approved by"): {"name": "BERNADETTE A. SUSVILLA EdD, CESO V",
-                              "position": "Schools Division Superintendent"},
-
-    ("sobp", "prepared by"): {"auto_name": True, "position": "School Head"},
-    ("sobp", "reviewed by"): {"name": "Emmanuel B. Garcia"},
-
-    # SBR (RCA) doesn't actually read this from the signatories table — the
-    # generated report already pulls the School Head straight from the active
-    # plan (cashadv_pdf.py). This row is display-only, so whoever is filling
-    # in Setup can see which SH name that report will use.
-    ("cashadv", "sh"): {"auto_name": True, "position": "School Head"},
-}
-
+# Preloaded signatories live in sig_defaults.py (also used to seed a fresh database).
 # Roles that always track the active plan's School Head — read-only in Setup,
 # because editing them wouldn't do anything (the plan overrides it every load).
 _AUTO_NAME_ROLES = {(doc, role) for (doc, role), v in SIG_DEFAULT_NAMES.items()
@@ -88,18 +62,23 @@ class SetupScreen(QWidget):
         root = QVBoxLayout(self)
         root.setSpacing(10)
 
-        header = QHBoxLayout()
+        self.header_widget = QWidget()
+        header = QHBoxLayout(self.header_widget)
+        header.setContentsMargins(0, 0, 0, 0)
         self.dirty_label = QLabel("Unsaved changes")
         self.dirty_label.setObjectName("onBg")
-        self.dirty_label.setStyleSheet(f"color: {style.current_palette()['muted']};")
+        self.dirty_label.setObjectName("muted")
         self.dirty_label.setVisible(False)
         header.addWidget(self.dirty_label)
         header.addStretch()
         self.save_btn = QPushButton("Save Changes")
         self.save_btn.clicked.connect(self._save)
         self.save_btn.setEnabled(False)
+        sp = self.save_btn.sizePolicy()
+        sp.setRetainSizeWhenHidden(True)
+        self.save_btn.setSizePolicy(sp)
         header.addWidget(self.save_btn)
-        root.addLayout(header)
+        root.addWidget(self.header_widget)
 
         body = QHBoxLayout()
         body.setSpacing(14)
@@ -111,14 +90,18 @@ class SetupScreen(QWidget):
         self.nav.addItems(SECTIONS)
         self.nav.currentRowChanged.connect(self._on_section)
         body.addWidget(self.nav)
-        # Account Codes stays hidden from normal users until admin mode is
+        # Admin-only sections stay hidden from normal users until admin mode is
         # activated (Admin Access tab), same session-only reveal as Consolidation.
-        self.nav.setRowHidden(SECTIONS.index("Account Codes"), True)
+        for name in ADMIN_ONLY_SECTIONS:
+            self.nav.setRowHidden(SECTIONS.index(name), True)
 
         self.pages = QStackedWidget()
         body.addWidget(self.pages, stretch=1)
         for builder in (self._page_school,
-                        self._page_signatories, self._page_account_codes,
+                        self._page_signatories, self._page_fund_sources,
+                        self._page_account_codes,
+                        self._page_procurement_modes, self._page_units,
+                        self._page_schools,
                         self._page_tools, self._page_admin_access):
             self.pages.addWidget(self._scroll(builder()))
 
@@ -134,7 +117,12 @@ class SetupScreen(QWidget):
 
     def _on_section(self, row):
         if row >= 0:
+            # Unsaved edits on the tab being left are dropped, not carried along.
+            if self._dirty:
+                self._dirty = False
+                self.refresh()
             self.pages.setCurrentIndex(row)
+            self._update_dirty_ui()
 
     # ---------- pages ----------
 
@@ -143,16 +131,19 @@ class SetupScreen(QWidget):
         form = QFormLayout(w)
         form.setContentsMargins(6, 6, 12, 12)
         form.setSpacing(12)
+        form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self.region_edit = QLineEdit()
         self.division_edit = QLineEdit()
         self.name_edit = QLineEdit()
         self.head_edit = QLineEdit()
-        self.region_edit.setPlaceholderText("e.g. Region VII - Central Visayas")
-        self.division_edit.setPlaceholderText("e.g. Schools Division of Bais City")
+        self.region_edit.setPlaceholderText("e.g. REGION VII - CENTRAL VISAYAS")
+        self.division_edit.setPlaceholderText("e.g. SCHOOLS DIVISION OF BAIS CITY")
+        for e in (self.region_edit, self.division_edit):      # always capitals, as they print
+            e.textEdited.connect(lambda text, e=e: self._force_upper(e, text))
         p = style.current_palette()
         for e in (self.name_edit, self.head_edit):
             e.setReadOnly(True)
-            e.setStyleSheet(f"background: {p['disabled_bg']}; color: {p['muted']};")
+            e.setProperty("locked", True)
         self.year_edit = QLineEdit()
         self.year_edit.setPlaceholderText("e.g. 2026")
 
@@ -164,7 +155,7 @@ class SetupScreen(QWidget):
         note = QLabel("School Name and School Head follow the active plan (School ID "
                       "shown in parentheses) — switch or edit it in Records.")
         note.setWordWrap(True)
-        note.setStyleSheet(f"color: {p['muted']};")
+        note.setObjectName("muted")
         form.addRow("", note)
         return w
 
@@ -189,10 +180,10 @@ class SetupScreen(QWidget):
 
             scope = QLabel()
             scope.setWordWrap(True)
-            scope.setStyleSheet(f"color: {style.current_palette()['muted']};")
-            scope.setVisible(per_plan)
+            scope.setObjectName("muted")
             self.sig_scope_labels[doc] = scope
             pv.addWidget(scope)
+            scope.setVisible(per_plan)      # after parenting, or it flashes as its own window
 
             table = QTableWidget(0, len(cols))
             table.setHorizontalHeaderLabels(cols)
@@ -222,10 +213,9 @@ class SetupScreen(QWidget):
         w = QWidget()
         v = QVBoxLayout(w)
         v.setContentsMargins(6, 6, 12, 12)
-        hint = QLabel("UACS Object Codes used in BPAS. Edit any cell, add a row, or remove "
-                      "selected rows — you'll be asked to save when you leave.")
+        hint = QLabel("UACS Object Codes used in BPAS. Edit, add or remove rows, then Save Changes.")
         hint.setWordWrap(True)
-        hint.setStyleSheet(f"color: {style.current_palette()['muted']};")
+        hint.setObjectName("muted")
         v.addWidget(hint)
         self.acct_code_table = QTableWidget(0, 2)
         self.acct_code_table.setHorizontalHeaderLabels(
@@ -251,6 +241,239 @@ class SetupScreen(QWidget):
         v.addLayout(row)
         return w
 
+    def _page_procurement_modes(self):
+        w = QWidget()
+        v = QVBoxLayout(w)
+        v.setContentsMargins(6, 6, 12, 12)
+        hint = QLabel("Procurement modes offered in every Excel template and enforced on import.")
+        hint.setWordWrap(True)
+        hint.setObjectName("muted")
+        v.addWidget(hint)
+        self.procurement_mode_table = QTableWidget(0, 1)
+        self.procurement_mode_table.setHorizontalHeaderLabels(["Mode of Procurement"])
+        self.procurement_mode_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.procurement_mode_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.procurement_mode_table.verticalHeader().setVisible(False)
+        self.procurement_mode_table.verticalHeader().setDefaultSectionSize(30)
+        v.addWidget(self.procurement_mode_table)
+
+        row = QHBoxLayout()
+        add_btn = QPushButton("Add Row")
+        add_btn.setObjectName("secondary")
+        add_btn.clicked.connect(self._add_procurement_mode_row)
+        rm_btn = QPushButton("Remove Selected")
+        rm_btn.setObjectName("danger")
+        rm_btn.clicked.connect(self._remove_procurement_mode_rows)
+        row.addStretch()
+        row.addWidget(add_btn)
+        row.addWidget(rm_btn)
+        v.addLayout(row)
+        return w
+
+    def _add_procurement_mode_row(self, mode=""):
+        t = self.procurement_mode_table
+        r = t.rowCount()
+        t.insertRow(r)
+        t.setItem(r, 0, QTableWidgetItem(mode))
+        if not mode:
+            t.setCurrentCell(r, 0)
+            t.editItem(t.item(r, 0))
+
+    def _remove_procurement_mode_rows(self):
+        t = self.procurement_mode_table
+        rows = sorted({i.row() for i in t.selectedItems()}, reverse=True)
+        for r in rows:
+            t.removeRow(r)
+        if rows:
+            self._mark_dirty()
+
+    def _collect_procurement_modes(self):
+        t = self.procurement_mode_table
+        out = []
+        for r in range(t.rowCount()):
+            item = t.item(r, 0)
+            if item and item.text().strip():
+                out.append(item.text().strip())
+        return out
+
+    def _page_fund_sources(self):
+        w = QWidget()
+        v = QVBoxLayout(w)
+        v.setContentsMargins(6, 6, 12, 12)
+        hint = QLabel("Fund sources offered in PR/JR (e.g. MOOE, SPED, SNED). "
+                      "Add a row for a new one, then click Save Changes.")
+        hint.setWordWrap(True)
+        hint.setObjectName("muted")
+        v.addWidget(hint)
+        self.fund_table = QTableWidget(0, 1)
+        self.fund_table.setHorizontalHeaderLabels(["Fund Source"])
+        self.fund_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.fund_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.fund_table.verticalHeader().setVisible(False)
+        self.fund_table.verticalHeader().setDefaultSectionSize(30)
+        v.addWidget(self.fund_table)
+
+        row = QHBoxLayout()
+        add_btn = QPushButton("Add Row")
+        add_btn.setObjectName("secondary")
+        add_btn.clicked.connect(lambda: self._add_fund_row())
+        rm_btn = QPushButton("Remove Selected")
+        rm_btn.setObjectName("danger")
+        rm_btn.clicked.connect(self._remove_fund_rows)
+        row.addStretch()
+        row.addWidget(add_btn)
+        row.addWidget(rm_btn)
+        v.addLayout(row)
+        return w
+
+    def _add_fund_row(self, name=""):
+        t = self.fund_table
+        r = t.rowCount()
+        t.insertRow(r)
+        t.setItem(r, 0, QTableWidgetItem(name))
+        if not name:
+            t.setCurrentCell(r, 0)
+            t.editItem(t.item(r, 0))
+
+    def _remove_fund_rows(self):
+        t = self.fund_table
+        rows = sorted({i.row() for i in t.selectedItems()}, reverse=True)
+        for r in rows:
+            t.removeRow(r)
+        if rows:
+            self._mark_dirty()
+
+    def _collect_fund_sources(self):
+        t = self.fund_table
+        return [t.item(r, 0).text().strip() for r in range(t.rowCount())
+                if t.item(r, 0) and t.item(r, 0).text().strip()]
+
+    def _page_units(self):
+        w = QWidget()
+        v = QVBoxLayout(w)
+        v.setContentsMargins(6, 6, 12, 12)
+        hint = QLabel("Unit suggestions for the Excel templates. Other values can still be typed.")
+        hint.setWordWrap(True)
+        hint.setObjectName("muted")
+        v.addWidget(hint)
+        self.unit_table = QTableWidget(0, 1)
+        self.unit_table.setHorizontalHeaderLabels(["Unit"])
+        self.unit_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.unit_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.unit_table.verticalHeader().setVisible(False)
+        self.unit_table.verticalHeader().setDefaultSectionSize(30)
+        v.addWidget(self.unit_table)
+
+        row = QHBoxLayout()
+        add_btn = QPushButton("Add Row")
+        add_btn.setObjectName("secondary")
+        add_btn.clicked.connect(self._add_unit_row)
+        rm_btn = QPushButton("Remove Selected")
+        rm_btn.setObjectName("danger")
+        rm_btn.clicked.connect(self._remove_unit_rows)
+        row.addStretch()
+        row.addWidget(add_btn)
+        row.addWidget(rm_btn)
+        v.addLayout(row)
+        return w
+
+    def _add_unit_row(self, unit=""):
+        t = self.unit_table
+        r = t.rowCount()
+        t.insertRow(r)
+        t.setItem(r, 0, QTableWidgetItem(unit))
+        if not unit:
+            t.setCurrentCell(r, 0)
+            t.editItem(t.item(r, 0))
+
+    def _remove_unit_rows(self):
+        t = self.unit_table
+        rows = sorted({i.row() for i in t.selectedItems()}, reverse=True)
+        for r in rows:
+            t.removeRow(r)
+        if rows:
+            self._mark_dirty()
+
+    def _collect_units(self):
+        t = self.unit_table
+        out = []
+        for r in range(t.rowCount()):
+            item = t.item(r, 0)
+            if item and item.text().strip():
+                out.append(item.text().strip())
+        return out
+
+    def _page_schools(self):
+        w = QWidget()
+        v = QVBoxLayout(w)
+        v.setContentsMargins(6, 6, 12, 12)
+        hint = QLabel("Schools accepted on import and offered in templates. Level Type: "
+                      + ", ".join(db.SCHOOL_LEVEL_TYPES) + ".")
+        hint.setWordWrap(True)
+        hint.setObjectName("muted")
+        v.addWidget(hint)
+        self.school_table = QTableWidget(0, 4)
+        self.school_table.setHorizontalHeaderLabels(
+            ["Level Type", "IU Code", "School ID", "School Name"])
+        hh = self.school_table.horizontalHeader()
+        for c in range(3):
+            hh.setSectionResizeMode(c, QHeaderView.ResizeToContents)
+        hh.setSectionResizeMode(3, QHeaderView.Stretch)
+        self.school_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.school_table.verticalHeader().setVisible(False)
+        self.school_table.verticalHeader().setDefaultSectionSize(30)
+        v.addWidget(self.school_table)
+
+        row = QHBoxLayout()
+        add_btn = QPushButton("Add Row")
+        add_btn.setObjectName("secondary")
+        add_btn.clicked.connect(lambda: self._add_school_row())
+        rm_btn = QPushButton("Remove Selected")
+        rm_btn.setObjectName("danger")
+        rm_btn.clicked.connect(self._remove_school_rows)
+        row.addStretch()
+        row.addWidget(add_btn)
+        row.addWidget(rm_btn)
+        v.addLayout(row)
+        return w
+
+    def _add_school_row(self, level_type="", iu_code="", school_id="", name=""):
+        t = self.school_table
+        r = t.rowCount()
+        t.insertRow(r)
+        for c, text in enumerate((level_type, iu_code, school_id, name)):
+            t.setItem(r, c, QTableWidgetItem(text))
+        if not (level_type or school_id or name):
+            t.setCurrentCell(r, 0)
+            t.editItem(t.item(r, 0))
+
+    def _remove_school_rows(self):
+        t = self.school_table
+        rows = sorted({i.row() for i in t.selectedItems()}, reverse=True)
+        for r in rows:
+            t.removeRow(r)
+        if rows:
+            self._mark_dirty()
+
+    def _collect_schools(self):
+        """Rows as (level_type, iu_code, school_id, name); blank rows are skipped."""
+        t = self.school_table
+        out = []
+        for r in range(t.rowCount()):
+            vals = [(t.item(r, c).text().strip() if t.item(r, c) else "") for c in range(4)]
+            if any(vals):
+                out.append(tuple(vals))
+        return out
+
+    def _school_problem(self, schools):
+        """First problem in the school rows as a message, or None if all are fine."""
+        for n, (level_type, _iu, school_id, name) in enumerate(schools, start=1):
+            if level_type not in db.SCHOOL_LEVEL_TYPES:
+                return (f"Schools, row {n}: Level Type “{level_type}” is not valid. "
+                        f"Use one of: {', '.join(db.SCHOOL_LEVEL_TYPES)}.")
+            if not school_id or not name:
+                return f"Schools, row {n}: School ID and School Name are both required."
+        return None
     def _page_admin_access(self):
         w = QWidget()
         v = QVBoxLayout(w)
@@ -261,11 +484,12 @@ class SetupScreen(QWidget):
             "The Consolidation tab is hidden from everyone by default. Enter the "
             "admin password below to reveal it for the rest of this session.")
         hint.setWordWrap(True)
-        hint.setStyleSheet(f"color: {style.current_palette()['muted']};")
+        hint.setObjectName("muted")
         v.addWidget(hint)
 
         activate_form = QFormLayout()
         activate_form.setSpacing(12)
+        activate_form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         v.addLayout(activate_form)
         self.admin_activate_pw = QLineEdit()
         self.admin_activate_pw.setEchoMode(QLineEdit.Password)
@@ -285,10 +509,12 @@ class SetupScreen(QWidget):
             QMessageBox.warning(self, "Incorrect Password", "That password is incorrect.")
             return
         self.admin_activate_pw.clear()
-        self.nav.setRowHidden(SECTIONS.index("Account Codes"), False)
+        for name in ADMIN_ONLY_SECTIONS:
+            self.nav.setRowHidden(SECTIONS.index(name), False)
         self.admin_activated.emit()
         from ui.toast import toast
-        toast(self, "Admin mode activated — Consolidation tab and Account Codes are now visible")
+        toast(self, "Admin mode activated — Consolidation, Account Codes, "
+                    "Procurement Modes, Units and Schools are now visible")
 
     def _page_tools(self):
         self.tools_screen = ToolsScreen()
@@ -351,7 +577,7 @@ class SetupScreen(QWidget):
             def cell(c):
                 item = table.item(r, c)
                 return item.text().strip() if item else ""
-            role, name = cell(0), cell(1)
+            role, name = cell(0), cell(1).upper()
             position = cell(2) if has_position else ""
             if role or name or position:
                 out.append({"role": role, "name": name, "position": position})
@@ -365,9 +591,6 @@ class SetupScreen(QWidget):
             title = t.item(r, 1)
             out.append((code.text() if code else "", title.text() if title else ""))
         return out
-
-    def _collect_pr_config(self):
-        return {k: e.text().strip() for k, e in self.pr_edits.items()}
 
     # ---------- load / save ----------
 
@@ -385,8 +608,8 @@ class SetupScreen(QWidget):
     def _load(self):
         info = db.get_school_info()
         plan = db.get_plan(db.get_active_batch())
-        self.region_edit.setText(info.get("region", ""))
-        self.division_edit.setText(info.get("division", ""))
+        self.region_edit.setText((info.get("region", "") or "").upper())
+        self.division_edit.setText((info.get("division", "") or "").upper())
         school = plan["school_name"] or ""
         level = (plan["level"] or "").strip()
         if school and level and level.lower() not in school.lower():
@@ -410,7 +633,12 @@ class SetupScreen(QWidget):
                 if active is None:
                     scope.setText("Import a plan in Records first — PR / RSQ "
                                   "signatories are set per plan.")
+                    # No plan yet: show the roles only (no names/designations);
+                    # the table stays locked and nothing is saved until a plan
+                    # is imported.
                     table.setEnabled(False)
+                    for role in default_roles:
+                        self._add_sig_row(doc, role)
                     continue
                 scope.setText(f"For the active plan: {plan['school_name'] or '(unnamed plan)'}"
                               f"{('  —  ' + plan['level']) if plan['level'] else ''}")
@@ -456,10 +684,36 @@ class SetupScreen(QWidget):
         for a in sorted(db.list_mooe_accounts(), key=lambda r: r["code"]):
             self._add_acct_row(a["code"], a["title"])
 
+        self.procurement_mode_table.setRowCount(0)
+        for m in db.list_procurement_modes():
+            self._add_procurement_mode_row(m)
+
+        self.fund_table.setRowCount(0)
+        for f in db.list_fund_sources():
+            self._add_fund_row(f)
+
+        self.unit_table.setRowCount(0)
+        for u in db.list_units():
+            self._add_unit_row(u)
+
+        self.school_table.setRowCount(0)
+        for s in db.list_schools():
+            self._add_school_row(s["level_type"], s["iu_code"], s["school_id"], s["name"])
+
     def _save(self):
+        schools = self._collect_schools()
+        problem = self._school_problem(schools)
+        if problem:
+            QMessageBox.warning(self, "Can't save schools", problem)
+            return
         plan = db.get_plan(db.get_active_batch())
+        # school_head is deliberately NOT written here — it's a single global
+        # setting, so saving the currently-active plan's head into it would make
+        # that one school's head "stick" as the default for every future import
+        # (see ui/import_dialog.py). Each plan already keeps its own school_head
+        # (import_batches.school_head); this global slot is an unused fallback.
         db.save_school_info(
-            plan["school_name"] or "", plan["school_head"] or "",
+            plan["school_name"] or "", "",
             self.division_edit.text().strip(), "",
             self.region_edit.text().strip())
         db.save_allotment(calendar_year=self.year_edit.text())
@@ -470,6 +724,10 @@ class SetupScreen(QWidget):
             db.replace_signatories(self._collect_signatories(doc), doc,
                                    active if per_plan else None)
         db.replace_mooe_accounts(self._collect_account_codes())
+        db.replace_procurement_modes(self._collect_procurement_modes())
+        db.replace_fund_sources(self._collect_fund_sources())
+        db.replace_units(self._collect_units())
+        db.replace_schools(schools)
 
         self._dirty = False
         self.refresh()
@@ -482,6 +740,19 @@ class SetupScreen(QWidget):
     def _update_dirty_ui(self):
         self.dirty_label.setVisible(self._dirty)
         self.save_btn.setEnabled(self._dirty)
+        # Tools / Admin Access have nothing to save — hide the button, but the header
+        # row keeps its height so the sidebar and page don't jump between tabs.
+        row = self.nav.currentRow()
+        self.save_btn.setVisible(
+            not (row >= 0 and SECTIONS[row] in NO_SAVE_SECTIONS))
+
+    @staticmethod
+    def _force_upper(edit, text):
+        up = text.upper()
+        if up != text:
+            pos = edit.cursorPosition()
+            edit.setText(up)
+            edit.setCursorPosition(pos)
 
     def _mark_dirty(self, *_):
         if not self._loading:
@@ -491,29 +762,28 @@ class SetupScreen(QWidget):
     def _watch_edits(self):
         for e in (self.region_edit, self.division_edit, self.year_edit):
             e.textEdited.connect(self._mark_dirty)
-        for t in (self.acct_code_table, *self.sig_tables.values()):
+        for t in (self.acct_code_table, self.procurement_mode_table, self.unit_table,
+                  self.fund_table,
+                  self.school_table, *self.sig_tables.values()):
             t.itemChanged.connect(self._mark_dirty)
+        for t in self.sig_tables.values():
+            t.itemChanged.connect(self._force_name_uppercase)
+
+    def _force_name_uppercase(self, item):
+        """Signatory Name column: forced to ALL CAPS as soon as it's typed,
+        not just on save."""
+        if self._loading or item.column() != 1:
+            return
+        upper = item.text().upper()
+        if item.text() != upper:
+            table = item.tableWidget()
+            table.blockSignals(True)
+            item.setText(upper)
+            table.blockSignals(False)
 
     def confirm_leave(self) -> bool:
-        """True if it's fine to leave Setup: nothing pending, or the user chose."""
-        if not self._dirty:
-            return True
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Warning)
-        box.setWindowTitle("Unsaved changes")
-        box.setText("You have unsaved changes in Setup.")
-        box.setInformativeText("Save them before leaving?")
-        save = box.addButton("Save", QMessageBox.AcceptRole)
-        box.addButton("Don't Save", QMessageBox.DestructiveRole)
-        cancel = box.addButton("Cancel", QMessageBox.RejectRole)
-        box.setDefaultButton(save)
-        box.exec()
-        clicked = box.clickedButton()
-        if clicked is cancel:
-            return False
-        if clicked is save:
-            self._save()
-        else:
+        """Leaving Setup drops any unsaved edits (no prompt); always fine to leave."""
+        if self._dirty:
             self._dirty = False
             self.refresh()
         return True

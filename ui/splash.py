@@ -1,5 +1,5 @@
 """Animated startup splash: Be Proactive -> Be Productive -> Be Positive -> B+ mark
--> "Budget + Procurement Automated System". Custom-painted, no image assets."""
+-> "Budget and Procurement Automated System". Custom-painted, no image assets."""
 
 from PySide6.QtCore import Qt, QTimer, QElapsedTimer, QRectF, Signal
 from PySide6.QtGui import QPainter, QColor, QFont, QLinearGradient, QPen, QGuiApplication
@@ -143,7 +143,7 @@ class SplashScreen(QWidget):
             f2 = QFont("Segoe UI", 15)
             f2.setLetterSpacing(QFont.AbsoluteSpacing, 3)
             p.setFont(f2)
-            self._text(p, "Budget + Procurement Automated System",
+            self._text(p, "Budget and Procurement Automated System",
                        QRectF(0, H / 2 + 62 + (1 - ta) * 10, W, 40), ta)
 
         # loading bar

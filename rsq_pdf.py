@@ -15,6 +15,10 @@ def _num(v):
     return f"{v:,.0f}" if v == int(v) else f"{v:,.2f}"
 
 
+def _money(v):
+    return f"{float(v or 0):,.2f}"
+
+
 def _sig_name(sigs, keyword):
     for s in sigs:
         if keyword in (s["role"] or "").lower():
@@ -38,11 +42,13 @@ def _sig_names(sigs, keyword):
             for s in sigs if keyword in (s["role"] or "").lower()]
 
 
-GENERAL_CONDITIONS = """
+def general_conditions_html(delivery_period: str = "") -> str:
+    delivery_txt = delivery_period.strip() if delivery_period else "________"
+    return f"""
 <div style='font-size:7.5pt'>
 <b>GENERAL CONDITIONS:</b> (It is important that end-users should fill-up below so that supplier's will be guided)<br><br>
 1. ALL ENTRIES MUST BE LEGIBLE AND PREFERABLY TYPE WRITTEN. NO ERASURE WHATSOEVER<br><br>
-2. DELIVERY PERIOD WITHIN ________ CALENDAR DAYS<br><br>
+2. DELIVERY PERIOD WITHIN {delivery_txt} CALENDAR DAYS<br><br>
 3. WARRANTY SHALL BE FOR A MINIMUM OF THREE (3) MONTHS FOR EXPENDABLE SUPPLIES AND MINIMUM OF ONE YEAR FOR NON-EXPENDABLE SUPPLIES
 RECKONED FROM DATE OF ACCEPTANCE OF THE ITEM(S) BY THE PROCURING ENTITY<br><br>
 4. PRICE VALIDITY SHALL BE FOR A PERIOD OF ___ THIRTY (30) ___ CALENDAR DAYS FROM DATE OF SUBMISSION OF PRICE QUOTATION<br><br>
@@ -61,19 +67,30 @@ def build_rsq_html(rsq_sigs, pr_sigs, header, lines, plan, info) -> str:
     school = resolve_school(plan, info)
     project = header["purpose"] or ""
 
-    chair_n, _ = _sig_by_role(rsq_sigs, "BAC Chairperson")
-    vice_n, _ = _sig_by_role(rsq_sigs, "BAC Vice-Chairperson")
-    members = [(n, "BAC MEMBER") for n, _ in _sig_names(rsq_sigs, "member")[:3]]
+    # The label under each name is the role as written in Setup, so renaming "BAC
+    # Vice-Chairperson" to "BAC Member" there makes it print as a BAC MEMBER.
+    def is_chair(role):
+        r = (role or "").lower()
+        return "chair" in r and "vice" not in r
+
+    chair = next((x for x in rsq_sigs if is_chair(x["role"])), None)
+    chair_n = (chair["name"] if chair else "") or ""
+    chair_label = ((chair["role"] if chair else "") or "BAC Chairperson").strip().upper()
     canv_n, _ = _sig_name(rsq_sigs, "canvass")
     req_n, _ = _sig_name(pr_sigs, "request")
+    total_abc = sum(it["amount"] or 0 for it in lines)
 
     # RSQ signatories carry no Designation — the label under each name is
     # always its role, never a leftover/stale position value.
-    chair_d = "BAC CHAIRPERSON"
+    chair_d = chair_label
 
-    # Members first, Vice-Chairman last, under the Chairman's "Very truly
-    # yours" block — Vice-Chairman only shown once it's actually filled in.
-    row_people = members + ([(vice_n, "BAC VICE-CHAIRPERSON")] if vice_n else [])
+    # Under the Chairperson's "Very truly yours" block: everyone else who is filled in,
+    # in Setup order with any Vice-Chairperson last. An empty row prints nothing.
+    others = [x for x in rsq_sigs
+              if not is_chair(x["role"]) and "canvass" not in (x["role"] or "").lower()
+              and (x["name"] or "").strip()]
+    others.sort(key=lambda x: "vice" in (x["role"] or "").lower())    # stable: vice last
+    row_people = [(x["name"], (x["role"] or "").strip().upper()) for x in others]
 
     body = []
     for i, it in enumerate(lines, start=1):
@@ -88,10 +105,12 @@ def build_rsq_html(rsq_sigs, pr_sigs, header, lines, plan, info) -> str:
     for _ in range(max(0, MIN_ROWS - len(lines))):
         body.append("<tr><td>&nbsp;</td><td></td><td></td><td></td><td></td><td></td></tr>")
 
+    # only the people actually filled in, sharing the row's width evenly
+    col_w = 100 // max(len(row_people), 1)
     member_cells = "".join(
-        "<td width='20%' align='center' style='padding-top:18px'>"
+        f"<td width='{col_w}%' align='center' style='padding-top:18px'>"
         f"{n.upper()}<br>{d}</td>" for n, d in row_people
-    ) or "<td></td>"
+    )
 
     _line = "____________________"
     return f"""
@@ -100,13 +119,13 @@ def build_rsq_html(rsq_sigs, pr_sigs, header, lines, plan, info) -> str:
 <table width='100%' style='font-size:9pt'>
   <tr>
     <td width='55%' valign='bottom'>&nbsp;</td>
-    <td width='45%'>Date: <u>&nbsp;{_line}&nbsp;</u></td>
+    <td width='45%' align='right'>Date: <u>&nbsp;{_line}&nbsp;</u></td>
   </tr>
   <tr><td valign='bottom'>&nbsp;</td>
-      <td>Canvass No.: <u>&nbsp;{_line}&nbsp;</u></td></tr>
+      <td align='right'>Canvass No.: <u>&nbsp;{_line}&nbsp;</u></td></tr>
   <tr>
     <td>Company Name: <u>&nbsp;{_line * 2}&nbsp;</u></td>
-    <td>Sheet No.: <u>&nbsp;{_line}&nbsp;</u></td>
+    <td align='right'>Sheet No.: <u>&nbsp;{_line}&nbsp;</u></td>
   </tr>
   <tr><td>Address: <u>&nbsp;{_line * 2}&nbsp;</u></td><td></td></tr>
 </table>
@@ -146,12 +165,12 @@ Return quotation in SEALED ENVELOPE to be opened on ____________________, at
 <table border='1' cellspacing='0' cellpadding='3' width='100%'
        style='border-collapse:collapse; font-size:8.5pt'>
   <tr><td width='16%'><b>Requested By:</b></td><td>{req_n}</td>
-      <td width='16%' rowspan='3' valign='top'><b>TOTAL ABC</b></td>
-      <td width='18%' rowspan='3'></td></tr>
+      <td width='16%' rowspan='3' valign='middle' align='center'><b>TOTAL ABC</b></td>
+      <td width='18%' rowspan='3' valign='middle' align='center'><b>{_money(total_abc)}</b></td></tr>
   <tr><td valign='top'><b>Project/Activity Name:</b></td><td>{project}</td></tr>
   <tr><td><b>Place of delivery:</b></td><td>{school}</td></tr>
 </table>
-{GENERAL_CONDITIONS}
+{general_conditions_html(header["delivery_period"])}
 <br>
 <div style='font-size:8pt'>After having carefully read and accepted your General Conditions,
 I hereby quote and offer the following prices for the items listed above</div>

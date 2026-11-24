@@ -1,22 +1,29 @@
-Competitive Bidding
-Limited Source Bidding
+Competitive Bidding (Public Bidding)
+Competitive Dialogue
+Direct Acquisition
 Direct Contracting
+Direct Procurement for Science, Technology and Innovation
+Direct Retail Purchase of POL and Airline Tickets
+Direct Sales
+International Competitive Bidding - Others
+Limited Source Bidding
+Negotiated Procurement - Adjacent / Contiguous
+Negotiated Procurement - Agency to Agency
+Negotiated Procurement - Community Participation
+Negotiated Procurement - Defense Cooperation Agreement
+Negotiated Procurement - Emergency Cases
+Negotiated Procurement - Highly Technical Consultants
+Negotiated Procurement - Lease of Real Property and Venue
+Negotiated Procurement - NGO Participation
+Negotiated Procurement - Sagip Saka
+Negotiated Procurement - Take-over of Contracts
+Negotiated Procurement - Two Failed Biddings
+Negotiated Procurement - United Nations Agencies
+Negotiated Procurement for International Events, Conferences, Summits, or Activities Hosted by the Philippine Government
+NP - Scientific, Scholarly/Artistic Work, Exclusive Tech. and Media Service
+Renewal of Contract per Appendix 21 (WETI)
+Renewal of Regular and Recurring Services per Appendix 37
 Repeat Order
-Shopping
-NP-53.1 Two Failed Biddings
-NP-53.2 Emergency Cases
-Emergency Procurement under the Bayanihan Act
-NP-53.3 Take-Over of Contracts
-NP-53.4 Adjacent or Contiguous
-NP-53.5 Agency-to-Agency
-NP-53.6 Scientific, Scholarly, Artistic Work, Exclusive Technology and Media Services
-NP-53.7 Highly Technical Consultants
-NP-53.8 Defense Cooperation Agreement
-NP-53.9 - Small Value Procurement
-NP-53.10 Lease of Real Property and Venue
-NP-53.11 NGO Participation
-NP-53.12 Community Participation
-NP-53.13 UN Agencies, Int'l Organizations or International Financing Institutions
-NP-53.14 Direct Retail Purchase of Petroleum Fuel, Oil and Lubricant (POL) Products and Airline Tickets
-Others - Foreign-funded procurement
-PS-DBM
+Shopping - Ordinary/Regular Office Supplies and Equipment
+Small Value Procurement
+Unsolicited Offer with Bid Matching

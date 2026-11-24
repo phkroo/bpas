@@ -214,11 +214,6 @@ class NavBar(QWidget):
         if item:
             item.setVisible(True)
 
-    def hide_view(self, name):
-        item = self._items_by_name.get(name)
-        if item:
-            item.setVisible(False)
-
     def reload_theme(self):
         dark = db.get_setting("ui_theme", "light") == "dark"
         self.theme_item.icon_key = "sun" if dark else "moon"

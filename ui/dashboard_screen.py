@@ -6,10 +6,12 @@ from PySide6.QtGui import QPainter, QColor, QBrush, QFont
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QComboBox, QLabel, QTableWidget,
     QTableWidgetItem, QHeaderView, QPushButton, QFrame, QGridLayout, QScrollArea,
+    QAbstractItemView, QBoxLayout,
 )
 
 import db
 from ui import style
+from ui.empty_state import NoPlanWidget
 
 GROUP_OPTIONS = [
     ("PAP Name", "pap_name"),
@@ -60,20 +62,8 @@ class DashboardScreen(QWidget):
         root.setContentsMargins(4, 4, 4, 4)
 
         # ---- empty state ----
-        self.empty_widget = QWidget()
-        ev = QVBoxLayout(self.empty_widget)
-        ev.setAlignment(Qt.AlignCenter)
-        ev.setSpacing(16)
-        el = QLabel("No plan loaded.\n\nGo to Records to select your school and import "
-                    "its BPAS Excel file.")
-        el.setObjectName("onBg")
-        el.setAlignment(Qt.AlignCenter)
-        el.setStyleSheet("font-size: 16px;")
-        eb = QPushButton("Go to Records")
-        eb.setMinimumSize(180, 44)
-        eb.clicked.connect(self.go_to_records.emit)
-        ev.addWidget(el)
-        ev.addWidget(eb, alignment=Qt.AlignCenter)
+        self.empty_widget = NoPlanWidget()
+        self.empty_widget.go_to_records.connect(self.go_to_records.emit)
         root.addWidget(self.empty_widget)
 
         self.main_widget = QWidget()
@@ -82,14 +72,14 @@ class DashboardScreen(QWidget):
         root.setContentsMargins(0, 0, 0, 0)
 
         top_row = QHBoxLayout()
-        _p = QLabel("School / Plan:"); _p.setObjectName("onBg"); _p.setStyleSheet("font-weight: bold;")
+        _p = QLabel("School / Plan:"); _p.setObjectName("boldOnBg")
         top_row.addWidget(_p)
         self.plan_combo = QComboBox()
-        self.plan_combo.setMinimumWidth(320)
+        self.plan_combo.setMinimumWidth(180)
         self.plan_combo.currentIndexChanged.connect(self._on_plan_changed)
         top_row.addWidget(self.plan_combo)
 
-        _g = QLabel("Group by:"); _g.setObjectName("onBg"); _g.setStyleSheet("font-weight: bold;")
+        _g = QLabel("Group by:"); _g.setObjectName("boldOnBg")
         top_row.addWidget(_g)
         self.group_combo = QComboBox()
         for label, _ in GROUP_OPTIONS:
@@ -125,6 +115,7 @@ class DashboardScreen(QWidget):
         layout.addWidget(self.month_chart)
 
         self.table = QTableWidget(0, 3)
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setHorizontalHeaderLabels(["Group", "Total Amount", "% of Budget"])
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         self.table.horizontalHeader().setDefaultAlignment(Qt.AlignCenter | Qt.AlignVCenter)
@@ -141,12 +132,7 @@ class DashboardScreen(QWidget):
         v.setSpacing(10)
 
         banner_row = QHBoxLayout()
-        self.check_banner = QLabel()
-        self.check_banner.setWordWrap(True)
-        self.check_banner.setStyleSheet(
-            "font-size: 14px; font-weight: bold; border: none; padding: 8px 12px;"
-            " border-radius: 6px;"
-        )
+        self.check_banner = style.make_banner()
         banner_row.addWidget(self.check_banner, 1)
         edit_btn = QPushButton("Edit allotment")
         edit_btn.setObjectName("secondary")
@@ -154,7 +140,8 @@ class DashboardScreen(QWidget):
         banner_row.addWidget(edit_btn, 0, Qt.AlignTop)
         v.addLayout(banner_row)
 
-        cols = QHBoxLayout()
+        cols = QBoxLayout(QBoxLayout.LeftToRight)     # stacks top-to-bottom when the window is narrow
+        self._cols = cols
         cols.setSpacing(28)
         v.addLayout(cols)
 
@@ -187,6 +174,7 @@ class DashboardScreen(QWidget):
         sep.setFrameShape(QFrame.Shape.VLine)
         sep.setFixedWidth(1)
         cols.addWidget(sep)
+        self._sep = sep
 
         # -- Annual Procurement Plan checking --
         app_grid = QGridLayout()
@@ -215,6 +203,17 @@ class DashboardScreen(QWidget):
         cols.addLayout(app_grid)
         cols.addStretch()
         return box
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        narrow = self.width() < 900
+        if hasattr(self, "_cols"):
+            self._cols.setDirection(QBoxLayout.TopToBottom if narrow else QBoxLayout.LeftToRight)
+            self._sep.setFrameShape(QFrame.Shape.HLine if narrow else QFrame.Shape.VLine)
+            if narrow:
+                self._sep.setFixedWidth(16777215); self._sep.setFixedHeight(1)
+            else:
+                self._sep.setFixedHeight(16777215); self._sep.setFixedWidth(1)
 
     def _edit_allotment(self):
         bid = db.get_active_batch()
@@ -303,7 +302,7 @@ class DashboardScreen(QWidget):
         self._fit_table_height()
 
         self._render_bar(self.month_chart, db.monthly_totals(batch_id),
-                         "Budget by Month", color_cycle=False)
+                         "Budget by Month")
 
     def _fit_table_height(self):
         """Size the table to show every row with no inner scrollbar; the page
@@ -341,7 +340,7 @@ class DashboardScreen(QWidget):
         except AttributeError:
             pass
 
-    def _render_bar(self, view, rows, title, color_cycle=True):
+    def _render_bar(self, view, rows, title):
         top = rows[:15]
         bar_set = QBarSet("Total Amount")
         categories = []

@@ -39,7 +39,7 @@ def main():
     db.init_db()
     app = QApplication(sys.argv)
     app.setWindowIcon(make_icon(db.get_setting("ui_theme", "light")))
-    app.setFont(_pick_font(["Segoe UI", "IBM Plex Sans", "Inter"], 10))
+    app.setFont(_pick_font(["Segoe UI"], 10))
     app.setStyleSheet(stylesheet(db.get_setting("ui_theme", "light")))
 
     # show the (empty) splash card right away, build the window behind it, then
@@ -50,8 +50,10 @@ def main():
 
     window = MainWindow()
     screen = app.primaryScreen()
-    if screen:
-        window.setGeometry(screen.availableGeometry())
+    if screen:                      # Restore size: centred, leaving room for the title bar
+        g = screen.availableGeometry()
+        w, h = min(1100, g.width() - 40), min(700, g.height() - 100)
+        window.setGeometry(g.x() + (g.width() - w) // 2, g.y() + 60 + (g.height() - 100 - h) // 2, w, h)
 
     def open_main():
         window.showMaximized()

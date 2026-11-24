@@ -20,7 +20,7 @@ ES 0818005 120088 Cambagahan Elementary School
 ES 0818005 120089 Cambaguio Elementary School
 ES 0818005 120091 Dawis Elementary School
 ES 0818005 120092 Lonoy Elementary School
-ES 0818005 120093 Lo-oc Elementary Schhol
+ES 0818005 120093 Lo-oc Elementary School
 ES 0818005 120094 Lowason Elementary School
 ES 0818005 120097 Mansangaban Elementary School
 ES 0818005 120098 Okiot ES

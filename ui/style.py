@@ -94,7 +94,11 @@ PALETTES = {
 }
 
 
-UI_FONT = "'Segoe UI', 'IBM Plex Sans', system-ui, -apple-system, sans-serif"
+UI_FONT = "'Segoe UI', system-ui, sans-serif"
+
+# Design tokens — change here, every screen follows.
+TYPE = {"small": 12, "base": 13, "hint": 13, "title": 16, "h1": 20, "banner": 14}
+RADIUS = {"control": 8, "card": 12, "pill": 10}
 
 
 def _down_arrow_url(color: str) -> str:
@@ -130,9 +134,10 @@ def stylesheet(theme: str = "light") -> str:
     arrow = _down_arrow_url(p["muted"])
     combo_arrow = (f"QComboBox::down-arrow {{ image: url({arrow}); width: 14px; height: 14px; }}"
                    if arrow else "")
+    t, r = TYPE, RADIUS
     return f"""
 * {{
-    font-size: 13px;
+    font-size: {t['base']}px;
     font-family: {UI_FONT};
     color: {p['text']};
 }}
@@ -148,11 +153,27 @@ QLabel#onBg {{ color: {p['on_bg']}; background: transparent; }}
 QFrame#checkPanel QLabel {{ color: {p['text']}; background: transparent; }}
 QFrame#checkPanelSep {{ background: {p['surface_border']}; border: none; }}
 
+/* ---------- text roles (replace inline setStyleSheet) ---------- */
+QLabel#muted {{ color: {p['muted']}; background: transparent; }}
+QLabel#bold {{ font-weight: 600; background: transparent; }}
+QLabel#boldOnBg {{ font-weight: 600; color: {p['on_bg']}; background: transparent; }}
+QLabel#pageTitle {{ font-size: {t['title']}px; font-weight: 700; color: {p['heading']};
+    background: transparent; }}
+QLabel#emptyNote {{ font-size: {t['title']}px; color: {p['on_bg']}; background: transparent; }}
+QLabel#amount {{ font-size: 15px; font-weight: 700; }}
+QLabel#count {{ font-size: {t['base']}px; color: {p['on_bg']}; background: transparent; }}
+QLabel#banner {{
+    font-size: {t['banner']}px; font-weight: 600;
+    padding: 9px 14px; border-radius: {r['control']}px;
+}}
+QLineEdit[locked="true"] {{ background: {p['disabled_bg']}; color: {p['muted']}; }}
+QLabel[locked="true"] {{ background: {p['disabled_bg']}; color: {p['muted']}; }}
+
 /* ---------- panels ---------- */
 QFrame#glass, QFrame#statCard, QFrame#checkPanel {{
     background: {p['surface']};
     border: 1px solid {p['surface_border']};
-    border-radius: 10px;
+    border-radius: {r['card']}px;
 }}
 
 QListWidget#setupNav {{
@@ -177,7 +198,7 @@ QListWidget#setupNav::item:selected {{
 QGroupBox {{
     background: {p['surface']};
     border: 1px solid {p['surface_border']};
-    border-radius: 14px;
+    border-radius: {r['card']}px;
     margin-top: 14px;
     padding: 14px;
     font-weight: 700;
@@ -194,9 +215,9 @@ QPushButton {{
     background: {p['accent']};
     color: {p['on_accent']};
     border: none;
-    border-radius: 10px;
-    padding: 9px 18px;
-    font-weight: 700;
+    border-radius: {r['control']}px;
+    padding: 8px 18px;
+    font-weight: 600;
 }}
 QPushButton:hover {{ background: {p['accent_hover']}; }}
 QPushButton:pressed {{ background: {p['accent_pressed']}; }}
@@ -233,12 +254,12 @@ QLineEdit, QComboBox, QTextEdit, QAbstractSpinBox {{
     background: {p['input_bg']};
     color: {p['text']};
     border: 1px solid {p['input_border']};
-    border-radius: 9px;
+    border-radius: {r['control']}px;
     padding: 7px 10px;
     selection-background-color: {p['accent']};
     selection-color: {p['on_accent']};
 }}
-QLineEdit:focus, QComboBox:focus, QTextEdit:focus {{
+QLineEdit:focus, QComboBox:focus, QTextEdit:focus, QAbstractSpinBox:focus {{
     border: 1px solid {p['accent']};
 }}
 QComboBox::drop-down {{ border: none; width: 28px; }}
@@ -279,7 +300,7 @@ QTableWidget {{
     color: {p['text']};
     alternate-background-color: {p['table_alt']};
     border: 1px solid {p['surface_border']};
-    border-radius: 10px;
+    border-radius: {r['card']}px;
     gridline-color: {p['grid']};
     selection-background-color: {p['sel_bg']};
     selection-color: {p['sel_text']};
@@ -352,6 +373,10 @@ QCheckBox::indicator:checked, QRadioButton::indicator:checked {{
     background: {p['accent']};
     border-color: {p['accent']};
 }}
+QCheckBox::indicator:disabled, QRadioButton::indicator:disabled {{
+    background: {p['disabled_bg']};
+    border-color: {p['disabled_bg']};
+}}
 QCheckBox::indicator:indeterminate {{
     background: {p['accent']};
     border-color: {p['accent']};
@@ -389,8 +414,13 @@ QToolTip {{
 """
 
 
-# back-compat default (light)
-APP_STYLESHEET = stylesheet("light")
+def make_banner():
+    """A status banner label; colour it per state with ui.status.banner_qss(kind)."""
+    from PySide6.QtWidgets import QLabel
+    lbl = QLabel()
+    lbl.setObjectName("banner")
+    lbl.setWordWrap(True)
+    return lbl
 
 
 def current_palette() -> dict:

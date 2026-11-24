@@ -28,7 +28,7 @@ FORM_FIELDS = [
     ("category_uacs_school", "Category / UACS / School", "combo"),
     ("pap_name", "PAP Name", "combo"),
     ("gad_category", "GAD Category", "combo"),
-    ("general_description", "General Description", "combo"),
+    ("general_description", "General Description", "text"),
     ("item_description", "Item Description", "text"),
     ("accounting_title", "Accounting Title", "combo"),
     ("app_for", "APP Form", "combo"),
@@ -66,10 +66,20 @@ def _options(batch_id) -> dict:
                   "accounting_title", "mode_of_procurement", "app_for", "app_cs",
                   "unit", "month"):
         out[field] = db.distinct_values(field)
-    out["general_description"] = db.distinct_values("general_description", batch_id)
 
     for field, values in _BASELINE.items():
         out[field] += [v for v in values if v not in out[field]]
+    # the standard GAD categories (same list as the Excel template) stay selectable
+    # before any row uses them; any other value already in the data is kept after them
+    import xlsx_lists
+    standard = xlsx_lists.list_sources()["gad_category"]
+    out["gad_category"] = standard + [v for v in out["gad_category"] if v not in standard]
+    # the full lists (same as the Excel template) for these too, then anything else in use
+    sources = xlsx_lists.list_sources()
+    for field in ("pap_name", "mode_of_procurement", "unit"):
+        listed = list(sources.get(field, []))
+        known = {v.lower() for v in listed}
+        out[field] = listed + [v for v in out[field] if v.lower() not in known]
     # titles from the Account Codes list stay selectable before any row uses them
     known = set(out["accounting_title"])
     out["accounting_title"] += sorted(
@@ -89,9 +99,12 @@ class ItemDialog(QDialog):
         self.setModal(True)
         self.values = None
         self._locked_pos = None
+        # the plan's own Amount rate (what it was imported with); today's Setup > Tools
+        # rate only for plans that have none stored
+        stored = db.get_batch_rate(batch_id)
+        self._rate = stored if stored is not None else db.get_provision_multiplier()
 
         options = _options(batch_id)
-        self._titles = set(db.list_account_codes())
 
         self.widgets = {}
         self._form = form = QFormLayout()
@@ -101,7 +114,7 @@ class ItemDialog(QDialog):
             form.addRow(label + ":", self._make(field, kind, row, options))
 
         self.amount_lbl = QLabel()
-        self.amount_lbl.setStyleSheet("font-weight: bold; font-size: 15px;")
+        self.amount_lbl.setObjectName("amount")
         form.addRow("Amount:", self.amount_lbl)
 
         body = QWidget()
@@ -219,7 +232,7 @@ class ItemDialog(QDialog):
         if price is None or qty is None:
             self.amount_lbl.setText("—")
         else:
-            self.amount_lbl.setText(f"{round(price * qty, 2):,.2f}")
+            self.amount_lbl.setText(f"{db.money(price, qty, self._rate):,.2f}")
 
     def _accept(self):
         if not self._text("item_description"):
@@ -230,15 +243,19 @@ class ItemDialog(QDialog):
             QMessageBox.warning(self, "Invalid Number",
                                 "Unit Price and Quantity must be numbers.")
             return
-        title = self._text("accounting_title")
-        if title and self._titles and title not in self._titles:
-            if QMessageBox.question(
-                    self, "Unknown Accounting Title",
-                    f"'{title}' is not in the Account Codes list, so no UACS code will "
-                    "be found for it.\n\nSave anyway?") != QMessageBox.Yes:
-                return
-
         values = {f: self._text(f) for f, _l, k in FORM_FIELDS if k != "number"}
-        values.update(unit_price=price, qty=qty, total_amount=round(price * qty, 2))
+        values.update(unit_price=price, qty=qty, total_amount=db.money(price, qty, self._rate))
+
+        # same rules as the import: an invalid row is refused, with the reason
+        import validation
+        canon = validation.canon_lists()
+        for field in ("pap_name", "gad_category", "accounting_title",
+                      "mode_of_procurement", "app_for", "app_cs"):
+            values[field] = validation.canonical(field, values[field], canon)
+        problems = validation.row_problems(values, canon, None)     # Amount is computed here
+        if problems:
+            QMessageBox.warning(self, "Cannot Save",
+                                "This record has a problem:\n\n• " + "\n• ".join(problems))
+            return
         self.values = values
         self.accept()

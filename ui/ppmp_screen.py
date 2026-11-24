@@ -1,12 +1,15 @@
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QBrush
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTableWidget, QTableWidgetItem,
     QHeaderView, QPushButton, QFileDialog, QMessageBox,
 )
 
 import db
+from ui import style
 import ppmp_pdf
+from ui.empty_state import NoPlanWidget
 
 MONTH_ABBR = [a for _, a in ppmp_pdf.MONTHS]
 SHADE = QColor(13, 116, 144, 48)
@@ -24,42 +27,67 @@ class PPMPScreen(QWidget):
         root = QVBoxLayout(self)
         root.setSpacing(10)
 
-        self.banner = QLabel()
-        self.banner.setWordWrap(True)
-        self.banner.setStyleSheet(
-            "font-size: 14px; font-weight: bold; padding: 8px 12px; border-radius: 6px;"
-        )
+        self.banner = style.make_banner()
         root.addWidget(self.banner)
 
         bar = QHBoxLayout()
         title = QLabel("Project Procurement Management Plan")
-        title.setObjectName("onBg")
-        title.setStyleSheet("font-size: 16px; font-weight: 700;")
+        title.setObjectName("pageTitle")
         bar.addWidget(title)
         bar.addStretch()
-        self.gen_btn = QPushButton("Generate PPMP PDF")
+        self.gen_btn = QPushButton("Generate PPMP")
         self.gen_btn.clicked.connect(self._generate)
         bar.addWidget(self.gen_btn)
-        root.addLayout(bar)
+        self.bar_widget = QWidget()
+        bar.setContentsMargins(0, 0, 0, 0)
+        self.bar_widget.setLayout(bar)
+        root.addWidget(self.bar_widget)
 
         self.table = QTableWidget(0, len(COLS))
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setHorizontalHeaderLabels(COLS)
         hh = self.table.horizontalHeader()
-        hh.setSectionResizeMode(1, QHeaderView.Stretch)
+        # text columns get the room; the 12 month columns are narrow shade cells
+        hh.setSectionResizeMode(QHeaderView.Fixed)
+        hh.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        hh.setSectionResizeMode(1, QHeaderView.Fixed)       # sized in _fit_description (min 170 px)
+        hh.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        hh.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        hh.setSectionResizeMode(4, QHeaderView.Fixed)       # long modes are cut (hover shows all)
+        self.table.setColumnWidth(4, 180)                    # so the description keeps its room
+        for c in range(5, len(COLS)):
+            self.table.setColumnWidth(c, 42)
+        self.table.setShowGrid(False)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setAlternatingRowColors(False)
         hh.setDefaultAlignment(Qt.AlignCenter | Qt.AlignVCenter)
         hh.setMinimumHeight(40)
         self.table.verticalHeader().setVisible(False)
-        self.table.verticalHeader().setDefaultSectionSize(26)
+        self.table.verticalHeader().setDefaultSectionSize(28)
         root.addWidget(self.table, stretch=1)
+
+        self.empty = NoPlanWidget()
+        root.addWidget(self.empty, stretch=1)
 
     # ---------- data ----------
 
     def refresh(self):
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(0, self._fit_description)      # after the rows are in
         self.batch_id = db.get_active_batch()
+        has = self.batch_id is not None
+        self.empty.setVisible(not has)
+        self.bar_widget.setVisible(False)
+        if not has:
+            self.banner.setVisible(False)
+            self.table.setVisible(False)
+            self.gen_btn.setEnabled(False)
+            return
 
         status = db.checking_status(self.batch_id)
         self._set_banner(status)
         balanced = bool(status["balanced"])
+        self.bar_widget.setVisible(balanced)
         self.gen_btn.setEnabled(balanced)
         self.table.setVisible(balanced)
 
@@ -103,6 +131,12 @@ class PPMPScreen(QWidget):
                 hdr.setFlags(hdr.flags() & ~Qt.ItemIsEditable)
                 self.table.setItem(ri, 1, hdr)
                 self.table.setSpan(ri, 1, 1, len(COLS) - 1)
+                tint = QColor(style.current_palette()["header_bg"])
+                hdr.setBackground(QBrush(tint))
+                blank = QTableWidgetItem("")
+                blank.setFlags(Qt.NoItemFlags)
+                blank.setBackground(QBrush(tint))
+                self.table.setItem(ri, 0, blank)
 
             ri = self.table.rowCount()
             self.table.insertRow(ri)
@@ -159,3 +193,15 @@ class PPMPScreen(QWidget):
             return
         open_path(path)
         toast(self, f"Saved to Downloads · {os.path.basename(path)}")
+
+    def _fit_description(self):
+        """Description takes the room left over, but never less than 170 px: in a narrow
+        window (half screen) the table scrolls sideways instead of squeezing it."""
+        t = self.table
+        others = sum(t.columnWidth(c) for c in range(t.columnCount()) if c != 1 and not t.isColumnHidden(c))
+        t.setColumnWidth(1, max(170, t.width() - 2 * t.frameWidth() - t.verticalScrollBar().sizeHint().width() - others))
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(0, self._fit_description)      # after the table has its new size

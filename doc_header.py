@@ -1,15 +1,26 @@
 """Shared DepEd letterhead block for generated PDFs (PR, RSQ, ...)."""
 
+import os
+
 _OE = "font-family:'Old English Text MT','Blackadder ITC',serif"
 _TR = "font-family:'Trajan Pro','Times New Roman',serif; font-size:10pt"
+_LOGO_PX = 72   # about 19 mm
 _TH = "font-family:'Tahoma','Segoe UI',sans-serif; font-size:10pt"
 
 
+def _logo_html() -> str:
+    """DepEd seal above the letterhead text; "" when data/deped_logo.png is missing."""
+    from db import bundled_path
+    path = bundled_path("data", "deped_logo.png")
+    if not os.path.exists(path):
+        return ""
+    return f"<img src='{path.replace(chr(92), '/')}' width='{_LOGO_PX}' height='{_LOGO_PX}'><br>"
+
+
 def resolve_division(info) -> str:
-    d = (info.get("division") or "").strip()
-    if d and "division" not in d.lower():
-        d = f"Schools Division of {d}"
-    return d
+    """The Division exactly as typed in Setup ("Schools Division of Bais City",
+    "Tanjay City Division", ...) — nothing is added or reworded."""
+    return (info.get("division") or "").strip()
 
 
 def resolve_school(plan, info) -> str:
@@ -20,7 +31,7 @@ def resolve_school(plan, info) -> str:
     return school
 
 
-def deped_header_html(plan, info) -> str:
+def deped_header_html(plan, info, school_font="trajan") -> str:
     region = info.get("region") or ""
     division = resolve_division(info)
     school = resolve_school(plan, info)
@@ -33,5 +44,6 @@ def deped_header_html(plan, info) -> str:
     if division:
         lines.append(f"<span style=\"{_TR}\"><b>{division}</b></span>")
     if school:
-        lines.append(f"<span style=\"{_TH}\"><b>{school}</b></span>")
-    return f"<div align='center' style='line-height:135%'>{'<br>'.join(lines)}</div>"
+        style = _TH if school_font == "tahoma" else _TR
+        lines.append(f"<span style=\"{style}\"><b>{school}</b></span>")
+    return f"<div align='center' style='line-height:135%'>{_logo_html()}{'<br>'.join(lines)}</div>"

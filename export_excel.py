@@ -27,7 +27,7 @@ FIELDS = [
 ]
 
 
-def export_items(rows, path: str, signatories=None, school_info=None):
+def export_items(rows, path: str):
     """rows: iterable of sqlite3.Row (or dict-like) records from db.query_items()."""
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -52,27 +52,18 @@ def export_items(rows, path: str, signatories=None, school_info=None):
     for col_idx in range(1, len(HEADERS) + 1):
         ws.column_dimensions[openpyxl.utils.get_column_letter(col_idx)].width = 22
 
-    _write_signature_block(ws, len(rows) + 2, signatories or [], school_info or {})
+    last_row = xlsx_lists.table_last_row(len(rows))
 
-    xlsx_lists.apply_validations(
-        wb, ws, last_row=max(xlsx_lists.LAST_ROW, len(rows) + 1),
-        extra=xlsx_lists.data_values(rows))
+    xlsx_lists.apply_validations(wb, ws, last_row=last_row, extra=xlsx_lists.data_values(rows))
+    xlsx_lists.add_amount_table(wb, ws, last_row)
+    # Amount: this export carries the plan's own figures (each row keeps the rate it was built
+    # with, and different schools may differ), so write the stored values, not a formula
+    # that re-computes them with one rate. The file then has no BPAS_RATE, like an older template.
+    for r, item in enumerate(rows, start=2):
+        ws.cell(row=r, column=xlsx_lists.AMOUNT_COL).value = xlsx_lists.money(item["total_amount"])
+    for r in range(len(rows) + 2, last_row + 1):
+        ws.cell(row=r, column=xlsx_lists.AMOUNT_COL).value = None
+    if xlsx_lists.RATE_NAME in wb.defined_names:
+        del wb.defined_names[xlsx_lists.RATE_NAME]
 
     wb.save(path)
-
-
-def _write_signature_block(ws, last_data_row, signatories, school_info):
-    if not signatories:
-        return
-    r = last_data_row + 3
-    if school_info.get("school_name"):
-        ws.cell(row=r, column=1, value=school_info["school_name"]).font = Font(bold=True)
-        r += 2
-
-    for sig in signatories:
-        role = sig["role"]
-        ws.cell(row=r, column=1, value=f"{role}:" if role else "")
-        name_cell = ws.cell(row=r + 2, column=1, value=(sig["name"] or "").upper())
-        name_cell.font = Font(bold=True, underline="single")
-        ws.cell(row=r + 3, column=1, value=sig["position"] or "")
-        r += 5

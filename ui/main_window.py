@@ -24,27 +24,18 @@ VIEW_TABS = ["Dashboard", "Records", "Consolidation", "PPMP", "SOB/MDP", "APP",
              "PR/JR/RSQ", "Setup"]
 DASHBOARD_INDEX = VIEW_TABS.index("Dashboard")
 RECORDS_INDEX = VIEW_TABS.index("Records")
-SETUP_INDEX = VIEW_TABS.index("Setup")
 CONSOLIDATION_INDEX = VIEW_TABS.index("Consolidation")
+
+
+APP_VERSION = "1.1"   # shown in the title bar
 
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self._consolidation_unlocked = False
         self.resize(1200, 760)
-        # Title bar with minimize + close only — no maximize/restore button.
-        # The app is meant to run maximized, and removing the button (not just
-        # guarding against it) also removes the native double-click-title-bar
-        # -to-maximize gesture, which is what could leave the window in a
-        # broken chrome-less fullscreen state. Spelled out explicitly (rather
-        # than subtracting from self.windowFlags()) so minimize/close/title
-        # are always present regardless of Qt's platform-specific defaults.
-        self.setWindowFlags(
-            Qt.Window | Qt.CustomizeWindowHint | Qt.WindowTitleHint
-            | Qt.WindowSystemMenuHint | Qt.WindowMinimizeButtonHint
-            | Qt.WindowCloseButtonHint
-        )
+        # Standard native title bar (minimize / maximize / close) so Windows snap layouts
+        # and Win+Arrow work for side-by-side use with Excel.
         self._refresh_title()
         self._apply_theme_chrome()
 
@@ -65,18 +56,17 @@ class MainWindow(QMainWindow):
         self.setup_screen = SetupScreen()
         self.setup_screen.saved.connect(self._on_setup_saved)
         self.setup_screen.admin_activated.connect(self._on_admin_activated)
-        for sig in (self.records_screen.changed, self.dashboard_screen.plan_changed):
-            sig.connect(self.dashboard_screen.refresh)
-            sig.connect(self.ppmp_screen.refresh)
-            sig.connect(self.sobp_screen.refresh)
-            sig.connect(self.app_screen.refresh)
-            sig.connect(self.pr_screen.refresh)
-            sig.connect(self.consolidation_screen.refresh)
-            sig.connect(self._refresh_title)
-        self.dashboard_screen.plan_changed.connect(self.records_screen.refresh)
+        # Only the visible screen is refreshed on a change; _select_view refreshes
+        # whichever screen is opened next, so hidden ones never go stale.
+        self.records_screen.changed.connect(self._refresh_unless_records)
+        self.dashboard_screen.plan_changed.connect(self._refresh_visible)
+        self.records_screen.changed.connect(self._refresh_title)
+        self.dashboard_screen.plan_changed.connect(self._refresh_title)
         self.records_screen.import_requested.connect(self._open_import)
-        self.dashboard_screen.go_to_records.connect(
-            lambda: self._select_view(RECORDS_INDEX))
+        for w in (self.dashboard_screen.empty_widget, self.consolidation_screen.empty_widget,
+                  self.ppmp_screen.empty, self.sobp_screen.empty,
+                  self.app_screen.empty, self.pr_screen.empty):
+            w.go_to_records.connect(lambda: self._select_view(RECORDS_INDEX))
 
         self.views = QStackedWidget()
         self.views.addWidget(self.dashboard_screen)             # 0
@@ -138,22 +128,6 @@ class MainWindow(QMainWindow):
             self.setWindowState(self.windowState() & ~Qt.WindowFullScreen
                                 | Qt.WindowMaximized)
 
-    def nativeEvent(self, eventType, message):
-        # Belt-and-braces on top of removing the maximize button: swallow a
-        # double-click on the title bar itself at the Win32 message level, so
-        # it can never toggle maximize/restore no matter what Qt's own hint
-        # handling does on a given Windows build.
-        if eventType == b"windows_generic_MSG":
-            try:
-                msg = wintypes.MSG.from_address(int(message))
-                WM_NCLBUTTONDBLCLK = 0x00A3
-                HTCAPTION = 2
-                if msg.message == WM_NCLBUTTONDBLCLK and msg.wParam == HTCAPTION:
-                    return True, 0
-            except Exception:
-                pass
-        return super().nativeEvent(eventType, message)
-
     # ---------- navigation ----------
 
     def _current_theme(self):
@@ -165,9 +139,7 @@ class MainWindow(QMainWindow):
         QApplication.instance().setStyleSheet(style.stylesheet(new))
         self.navbar.reload_theme()
         self._apply_theme_chrome()
-        for w in (self.dashboard_screen, self.records_screen, self.ppmp_screen,
-                  self.sobp_screen, self.app_screen, self.pr_screen, self.setup_screen):
-            w.refresh()
+        self._refresh_visible()
 
     def _select_view(self, index):
         current = self.views.currentIndex()
@@ -181,10 +153,19 @@ class MainWindow(QMainWindow):
         if hasattr(widget, "refresh"):
             widget.refresh()
 
+    def _refresh_unless_records(self):
+        # Records refreshes itself before emitting `changed`.
+        if self.views.currentWidget() is not self.records_screen:
+            self._refresh_visible()
+
+    def _refresh_visible(self, *_):
+        widget = self.views.currentWidget()
+        if hasattr(widget, "refresh"):
+            widget.refresh()
+
     def _on_admin_activated(self):
         """Fired by Setup > Admin Access once the right password was entered —
         reveals the Consolidation tab for the rest of this session."""
-        self._consolidation_unlocked = True
         self.navbar.show_view("Consolidation")
         self._select_view(CONSOLIDATION_INDEX)
 
@@ -198,7 +179,7 @@ class MainWindow(QMainWindow):
     # ---------- actions ----------
 
     def _refresh_title(self):
-        parts = ["BPAS - Budget + Procurement Automated System"]
+        parts = [f"BPAS - Budget and Procurement Automated System v{APP_VERSION}"]
         plan = db.get_plan(db.get_active_batch())
         if plan["school_name"]:
             tag = plan["school_name"]
@@ -209,20 +190,10 @@ class MainWindow(QMainWindow):
 
     def _open_import(self):
         dlg = ImportDialog(self)
-        dlg.imported.connect(self.records_screen.refresh)
-        dlg.imported.connect(self.dashboard_screen.refresh)
-        dlg.imported.connect(self.ppmp_screen.refresh)
-        dlg.imported.connect(self.sobp_screen.refresh)
-        dlg.imported.connect(self.app_screen.refresh)
-        dlg.imported.connect(self.pr_screen.refresh)
-        dlg.imported.connect(self.consolidation_screen.refresh)
+        dlg.imported.connect(self._refresh_visible)
         dlg.imported.connect(self._refresh_title)
         dlg.exec()
 
     def _on_setup_saved(self):
         self._refresh_title()
-        self.dashboard_screen.refresh()
-        self.ppmp_screen.refresh()
-        self.sobp_screen.refresh()
-        self.app_screen.refresh()
-        self.pr_screen.refresh()
+        self._refresh_visible()
